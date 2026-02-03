@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">GPS Speedometer</string>
+    <string name="notification_channel_name">Trip Tracking</string>
+    <string name="notification_channel_description">Shows active trip status</string>
+</resources>
