@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GPS Speedometer</string>
+    <string name="notification_channel_description">Shows active trip status</string>
+    <string name="notification_channel_name">Trip Tracking</string>
+    <style name="Theme.GpsSpeedometer" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>
