@@ -39,6 +39,10 @@ class TripManager(
     // Settings
     private var settings: AppSettings = AppSettings()
 
+    // Batching optimization
+    private val pendingPoints = mutableListOf<TripPointEntity>()
+    private val BATCH_SIZE = 10
+
     init {
         settingsRepository.settingsFlow
             .onEach { settings = it }
@@ -47,6 +51,8 @@ class TripManager(
 
     fun startTrip() {
         if (_tripState.value.isRecording) return
+
+        pendingPoints.clear()
 
         scope.launch {
             val trip = TripEntity(
@@ -69,6 +75,7 @@ class TripManager(
     }
 
     fun pauseTrip() {
+        flushPendingPoints()
         _tripState.update { it.copy(isPaused = true) }
     }
 
@@ -89,6 +96,8 @@ class TripManager(
 
     fun stopTrip() {
         if (!_tripState.value.isRecording) return
+
+        flushPendingPoints()
 
         val finalState = _tripState.value
         val tripId = currentTripId
@@ -252,21 +261,31 @@ class TripManager(
         _speedHistory.value = currentList
     }
 
+    private fun flushPendingPoints() {
+        if (pendingPoints.isEmpty()) return
+        val pointsToInsert = pendingPoints.toList()
+        pendingPoints.clear()
+        scope.launch {
+            tripDao.insertTripPoints(pointsToInsert)
+        }
+    }
+
     private fun persistPoint(location: LocationSample, rawMph: Float, smoothedMph: Float) {
         val tripId = currentTripId ?: return
-        scope.launch {
-            tripDao.insertTripPoint(
-                TripPointEntity(
-                    tripId = tripId,
-                    timestamp = location.timestamp,
-                    lat = location.lat,
-                    lng = location.lng,
-                    accuracyMeters = location.accuracyMeters,
-                    speedMps = location.speedMps,
-                    rawMph = rawMph,
-                    smoothedMph = smoothedMph
-                )
+        pendingPoints.add(
+            TripPointEntity(
+                tripId = tripId,
+                timestamp = location.timestamp,
+                lat = location.lat,
+                lng = location.lng,
+                accuracyMeters = location.accuracyMeters,
+                speedMps = location.speedMps,
+                rawMph = rawMph,
+                smoothedMph = smoothedMph
             )
+        )
+        if (pendingPoints.size >= BATCH_SIZE) {
+            flushPendingPoints()
         }
     }
 }
