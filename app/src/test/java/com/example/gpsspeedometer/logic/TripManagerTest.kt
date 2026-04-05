@@ -82,4 +82,39 @@ class TripManagerTest {
         val state = tripManager.tripState.value
         assert(state.distanceMeters > 0f)
     }
+
+    @Test
+    fun `test average speed calculation on stop`() = testScope.runTest {
+        val tripId = 1L
+        whenever(tripDao.insertTrip(any())).thenReturn(tripId)
+
+        val initialTrip = TripEntity(id = tripId, name = "Test", startTime = 1000, endTime = 0, elapsedMs = 0, distanceMeters = 0f, maxSpeedMph = 0f, avgSpeedMph = 0f)
+        whenever(tripDao.getTripById(tripId)).thenReturn(initialTrip)
+
+        tripManager.startTrip()
+
+        // Simulate movement
+        // Point 1
+        val loc1 = LocationSample(1000, 0.0, 0.0, 10f, 5f, 0f)
+        tripManager.processLocation(loc1)
+
+        // Point 2: some distance and time
+        val loc2 = LocationSample(11000, 0.001, 0.0, 10f, 5f, 0f)
+        tripManager.processLocation(loc2)
+
+        val state = tripManager.tripState.value
+        val distance = state.distanceMeters
+        val elapsed = state.elapsedMs
+
+        assert(distance > 0f)
+        assert(elapsed > 0)
+
+        tripManager.stopTrip()
+
+        // Verify tripDao.updateTrip was called with correct avgSpeedMph
+        org.mockito.kotlin.verify(tripDao).updateTrip(org.mockito.kotlin.check {
+            val expectedAvg = (distance / (elapsed / 1000f)) * 2.23694f
+            assertEquals(expectedAvg, it.avgSpeedMph, 0.001f)
+        })
+    }
 }

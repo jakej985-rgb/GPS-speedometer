@@ -97,12 +97,17 @@ class TripManager(
             if (tripId != null) {
                 val trip = tripDao.getTripById(tripId)
                 if (trip != null) {
+                    val avgSpeedMph = if (finalState.elapsedMs > 0) {
+                        (finalState.distanceMeters / (finalState.elapsedMs / 1000f)) * 2.23694f
+                    } else {
+                        0f
+                    }
                     val updatedTrip = trip.copy(
                         endTime = System.currentTimeMillis(),
                         elapsedMs = finalState.elapsedMs,
                         distanceMeters = finalState.distanceMeters,
                         maxSpeedMph = finalState.maxSpeedMph,
-                        avgSpeedMph = 0f // Calculate proper average later if needed
+                        avgSpeedMph = avgSpeedMph
                     )
                     tripDao.updateTrip(updatedTrip)
                 }
