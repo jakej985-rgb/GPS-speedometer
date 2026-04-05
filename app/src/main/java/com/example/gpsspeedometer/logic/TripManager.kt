@@ -18,6 +18,9 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.max
 
 class TripManager(
@@ -49,9 +52,14 @@ class TripManager(
         if (_tripState.value.isRecording) return
 
         scope.launch {
+            val startTime = System.currentTimeMillis()
+            val dateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
+            val dateStr = dateFormat.format(Date(startTime))
+            val tripName = "Trip - $dateStr"
+
             val trip = TripEntity(
-                name = "Trip ${System.currentTimeMillis()}", // Placeholder name
-                startTime = System.currentTimeMillis(),
+                name = tripName,
+                startTime = startTime,
                 endTime = 0,
                 elapsedMs = 0,
                 distanceMeters = 0f,
