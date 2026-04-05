@@ -3,6 +3,7 @@ package com.example.gpsspeedometer.ui.trips
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -42,6 +44,7 @@ fun TripDetailScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val settings by viewModel.settings.collectAsState()
     var trip by remember { mutableStateOf<TripEntity?>(null) }
 
     LaunchedEffect(tripId) {
@@ -101,8 +104,13 @@ fun TripDetailScreen(
                 // I'll stick to simple Column with Rows.
 
                 Row {
-                   InfoChip(label = "Distance", value = String.format("%.2f mi", t.distanceMeters * 0.000621371f))
-                   InfoChip(label = "Max Speed", value = String.format("%.1f MPH", t.maxSpeedMph))
+                   if (settings.useMph) {
+                       InfoChip(label = "Distance", value = String.format("%.2f mi", t.distanceMeters * 0.000621371f))
+                       InfoChip(label = "Max Speed", value = String.format("%.1f MPH", t.maxSpeedMph))
+                   } else {
+                       InfoChip(label = "Distance", value = String.format("%.2f km", t.distanceMeters / 1000f))
+                       InfoChip(label = "Max Speed", value = String.format("%.1f KM/H", t.maxSpeedMph * 1.60934f))
+                   }
                 }
                 Row {
                     val elapsedSec = t.elapsedMs / 1000

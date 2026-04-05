@@ -228,7 +228,7 @@ class TripManager(
             if (deltaSec < settings.minDeltaSec || deltaSec > settings.maxDeltaSec) return false
         }
 
-        // Min Segment check
+        // Min Segment check & Plausibility Check
         if (lastValidLocation != null) {
             val results = FloatArray(1)
             Location.distanceBetween(
@@ -236,7 +236,16 @@ class TripManager(
                 location.lat, location.lng,
                 results
             )
-            if (results[0] < settings.minSegmentMeters) return false
+            val dist = results[0]
+            if (dist < settings.minSegmentMeters) return false
+
+            // Spike rejection
+            val deltaSec = (location.timestamp - lastValidLocation!!.timestamp) / 1000f
+            if (deltaSec > 0) {
+                val impliedSpeedMps = dist / deltaSec
+                val impliedMph = impliedSpeedMps * 2.23694f
+                if (impliedMph > settings.maxPlausibleMph) return false
+            }
         }
 
         return true

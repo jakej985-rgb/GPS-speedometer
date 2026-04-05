@@ -143,7 +143,7 @@ class TrackingService : LifecycleService() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Trip in Progress")
             .setContentText(contentText)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)

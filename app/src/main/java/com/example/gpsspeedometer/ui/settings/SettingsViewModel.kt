@@ -50,6 +50,14 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
         viewModelScope.launch { repository.updateMaxDeltaSec(value) }
     }
 
+    fun updateUseMph(value: Boolean) {
+        viewModelScope.launch { repository.updateUseMph(value) }
+    }
+
+    fun updateSpeedAlertLimit(value: Float) {
+        viewModelScope.launch { repository.updateSpeedAlertLimit(value) }
+    }
+
     fun resetToDefaults() {
         viewModelScope.launch { repository.resetToDefaults() }
     }

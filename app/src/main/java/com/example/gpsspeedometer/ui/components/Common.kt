@@ -32,30 +32,55 @@ import androidx.compose.ui.unit.sp
 fun SpeedDisplay(
     mph: Float,
     kmh: Float,
+    useMph: Boolean,
+    isAlert: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val displayColor = if (isAlert) Color.Red else MaterialTheme.colorScheme.primary
+
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Large MPH
-        Text(
-            text = buildAnnotatedString {
-                withStyle(style = SpanStyle(fontSize = 96.sp, fontWeight = FontWeight.Bold)) {
-                    append(String.format("%.0f", mph))
-                }
-                withStyle(style = SpanStyle(fontSize = 24.sp, baselineShift = BaselineShift.Superscript)) {
-                    append(" MPH")
-                }
-            },
-            color = MaterialTheme.colorScheme.primary
-        )
-        // Smaller KM/H
-        Text(
-            text = String.format("%.0f km/h", kmh),
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.secondary
-        )
+        if (useMph) {
+            // Large MPH
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(style = SpanStyle(fontSize = 96.sp, fontWeight = FontWeight.Bold)) {
+                        append(String.format("%.0f", mph))
+                    }
+                    withStyle(style = SpanStyle(fontSize = 24.sp, baselineShift = BaselineShift.Superscript)) {
+                        append(" MPH")
+                    }
+                },
+                color = displayColor
+            )
+            // Smaller KM/H
+            Text(
+                text = String.format("%.0f km/h", kmh),
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.secondary
+            )
+        } else {
+             // Large KM/H
+             Text(
+                text = buildAnnotatedString {
+                    withStyle(style = SpanStyle(fontSize = 96.sp, fontWeight = FontWeight.Bold)) {
+                        append(String.format("%.0f", kmh))
+                    }
+                    withStyle(style = SpanStyle(fontSize = 24.sp, baselineShift = BaselineShift.Superscript)) {
+                        append(" KM/H")
+                    }
+                },
+                color = displayColor
+            )
+            // Smaller MPH
+            Text(
+                text = String.format("%.0f mph", mph),
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.secondary
+            )
+        }
     }
 }
 

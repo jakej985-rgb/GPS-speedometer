@@ -6,6 +6,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.gpsspeedometer.data.SettingsRepository
+import com.example.gpsspeedometer.data.AppSettings
 import com.example.gpsspeedometer.logic.TripManager
 import com.example.gpsspeedometer.service.TrackingService
 import kotlinx.coroutines.flow.SharingStarted
@@ -15,6 +17,7 @@ import kotlinx.coroutines.launch
 
 class MainViewModel(
     private val tripManager: TripManager,
+    private val settingsRepository: SettingsRepository,
     private val application: Application
 ) : AndroidViewModel(application) {
 
@@ -23,6 +26,9 @@ class MainViewModel(
 
     val speedHistory = tripManager.speedHistory
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val settings = settingsRepository.settingsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
 
     fun startTrip() {
         sendCommand(TrackingService.ACTION_START)
@@ -62,12 +68,13 @@ class MainViewModel(
 
     class Factory(
         private val tripManager: TripManager,
+        private val settingsRepository: SettingsRepository,
         private val application: Application
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             if (modelClass.isAssignableFrom(MainViewModel::class.java)) {
-                return MainViewModel(tripManager, application) as T
+                return MainViewModel(tripManager, settingsRepository, application) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class")
         }

@@ -28,6 +28,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.filled.Flip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -53,8 +56,10 @@ fun SpeedometerScreen(
 ) {
     val tripState by viewModel.tripState.collectAsState()
     val speedHistory by viewModel.speedHistory.collectAsState()
+    val settings by viewModel.settings.collectAsState()
 
     var showSaveDialog by remember { mutableStateOf(false) }
+    var isHudMode by remember { mutableStateOf(false) }
 
     // Status Logic
     val status = remember(tripState) {
@@ -92,20 +97,36 @@ fun SpeedometerScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp),
+                .padding(16.dp)
+                .graphicsLayer { scaleX = if (isHudMode) -1f else 1f },
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Status Chip
-            SuggestionChip(
-                onClick = { },
-                label = { Text(status) },
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Status Chip
+                SuggestionChip(
+                    onClick = { },
+                    label = { Text(status) },
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                IconButton(onClick = { isHudMode = !isHudMode }) {
+                    Icon(Icons.Default.Flip, contentDescription = "Toggle HUD Mode")
+                }
+            }
 
             // Speed Display
+            val speedToCompare = if (settings.useMph) tripState.currentSpeedMph else tripState.currentSpeedKmh
+            val isAlert = speedToCompare > settings.speedAlertLimit
+
             SpeedDisplay(
                 mph = tripState.currentSpeedMph,
                 kmh = tripState.currentSpeedKmh,
+                useMph = settings.useMph,
+                isAlert = isAlert,
                 modifier = Modifier.padding(vertical = 16.dp)
             )
 
@@ -124,8 +145,13 @@ fun SpeedometerScreen(
                 horizontalArrangement = Arrangement.Center,
                 maxItemsInEachRow = 3
             ) {
-                val distMiles = tripState.distanceMeters * 0.000621371f
-                InfoChip(label = "Distance", value = String.format("%.2f mi", distMiles))
+                if (settings.useMph) {
+                    val distMiles = tripState.distanceMeters * 0.000621371f
+                    InfoChip(label = "Distance", value = String.format("%.2f mi", distMiles))
+                } else {
+                    val distKm = tripState.distanceMeters / 1000f
+                    InfoChip(label = "Distance", value = String.format("%.2f km", distKm))
+                }
 
                 val elapsedSec = tripState.elapsedMs / 1000
                 val h = elapsedSec / 3600
@@ -133,7 +159,11 @@ fun SpeedometerScreen(
                 val s = elapsedSec % 60
                 InfoChip(label = "Time", value = String.format("%02d:%02d:%02d", h, m, s))
 
-                InfoChip(label = "Max Speed", value = String.format("%.1f", tripState.maxSpeedMph))
+                if (settings.useMph) {
+                    InfoChip(label = "Max Speed", value = String.format("%.1f", tripState.maxSpeedMph))
+                } else {
+                    InfoChip(label = "Max Speed", value = String.format("%.1f", tripState.maxSpeedMph * 1.60934f))
+                }
             }
 
             Spacer(modifier = Modifier.weight(1f))

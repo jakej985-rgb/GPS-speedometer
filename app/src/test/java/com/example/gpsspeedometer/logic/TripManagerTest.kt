@@ -10,13 +10,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import android.location.Location
 import org.junit.Assert.assertEquals
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import org.mockito.Mockito.mockStatic
 import org.mockito.kotlin.any
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+import kotlinx.coroutines.cancel
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripManagerTest {
@@ -39,7 +43,7 @@ class TripManagerTest {
         ))
         whenever(settingsRepository.settingsFlow).thenReturn(settingsFlow)
 
-        tripManager = TripManager(settingsRepository, tripDao, testScope)
+        tripManager = TripManager(settingsRepository, tripDao, testScope.backgroundScope)
     }
 
     @Test
@@ -66,20 +70,30 @@ class TripManagerTest {
 
     @Test
     fun `test distance accumulation`() = testScope.runTest {
-        // Mock start trip
-        whenever(tripDao.insertTrip(any())).thenReturn(1L)
-        tripManager.startTrip()
+        mockStatic(Location::class.java).use { mockLocation ->
+            mockLocation.`when`<Any> {
+                Location.distanceBetween(any(), any(), any(), any(), any())
+            }.thenAnswer { invocation ->
+                val results = invocation.arguments[4] as FloatArray
+                results[0] = 11.1f // mock distance
+                null
+            }
 
-        // Point 1
-        val loc1 = LocationSample(1000, 0.0, 0.0, 10f, 5f, 0f)
-        tripManager.processLocation(loc1)
+            // Mock start trip
+            whenever(tripDao.insertTrip(any())).thenReturn(1L)
+            tripManager.startTrip()
 
-        // Point 2 (Valid segment)
-        // Move 10 meters approx (0.0001 deg lat ~ 11m)
-        val loc2 = LocationSample(2000, 0.0001, 0.0, 10f, 5f, 0f)
-        tripManager.processLocation(loc2)
+            // Point 1
+            val loc1 = LocationSample(1000, 0.0, 0.0, 10f, 5f, 0f)
+            tripManager.processLocation(loc1)
 
-        val state = tripManager.tripState.value
-        assert(state.distanceMeters > 0f)
+            // Point 2 (Valid segment)
+            // Move 10 meters approx (0.0001 deg lat ~ 11m)
+            val loc2 = LocationSample(2000, 0.0001, 0.0, 10f, 5f, 0f)
+            tripManager.processLocation(loc2)
+
+            val state = tripManager.tripState.value
+            assert(state.distanceMeters > 0f)
+        }
     }
 }
