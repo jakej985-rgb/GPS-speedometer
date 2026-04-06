@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -42,7 +42,7 @@ fun SettingsScreen(
                 title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -85,6 +85,13 @@ fun SettingsScreen(
             )
 
             SettingSlider(
+                label = "Speed Alert Limit",
+                value = settings.speedAlertLimit,
+                range = 10f..200f,
+                onValueChange = { viewModel.updateSpeedAlertLimit(it) }
+            )
+
+            SettingSlider(
                 label = "Max Plausible Speed (MPH)",
                 value = settings.maxPlausibleMph,
                 range = 50f..500f,
@@ -123,6 +130,19 @@ fun SettingsScreen(
                 Switch(
                     checked = settings.backgroundTrackingEnabled,
                     onCheckedChange = { viewModel.updateBackgroundTracking(it) }
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Use MPH (Imperial)", modifier = Modifier.weight(1f))
+                Switch(
+                    checked = settings.useMph,
+                    onCheckedChange = { viewModel.updateUseMph(it) }
                 )
             }
 

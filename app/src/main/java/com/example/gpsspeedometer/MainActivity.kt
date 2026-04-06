@@ -106,7 +106,7 @@ fun AppNavigation(appContainer: com.example.gpsspeedometer.di.AppContainer) {
     NavHost(navController = navController, startDestination = "main") {
         composable("main") {
             val viewModel: MainViewModel = viewModel(
-                factory = MainViewModel.Factory(appContainer.tripManager, context)
+                factory = MainViewModel.Factory(appContainer.tripManager, appContainer.settingsRepository, context)
             )
 
             SpeedometerScreen(
@@ -128,7 +128,7 @@ fun AppNavigation(appContainer: com.example.gpsspeedometer.di.AppContainer) {
 
         composable("trips") {
             val viewModel: TripsViewModel = viewModel(
-                factory = TripsViewModel.Factory(appContainer.database.tripDao())
+                factory = TripsViewModel.Factory(appContainer.database.tripDao(), appContainer.settingsRepository)
             )
             TripsScreen(
                 viewModel = viewModel,
@@ -143,7 +143,7 @@ fun AppNavigation(appContainer: com.example.gpsspeedometer.di.AppContainer) {
         ) { backStackEntry ->
             val tripId = backStackEntry.arguments?.getLong("tripId") ?: return@composable
             val viewModel: TripsViewModel = viewModel(
-                factory = TripsViewModel.Factory(appContainer.database.tripDao())
+                factory = TripsViewModel.Factory(appContainer.database.tripDao(), appContainer.settingsRepository)
             )
             TripDetailScreen(
                 tripId = tripId,

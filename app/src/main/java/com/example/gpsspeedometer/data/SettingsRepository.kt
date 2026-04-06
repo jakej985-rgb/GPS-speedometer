@@ -14,7 +14,9 @@ data class AppSettings(
     val backgroundTrackingEnabled: Boolean = true,
     val sampleIntervalMs: Long = 1000L,
     val minDeltaSec: Float = 0.3f,
-    val maxDeltaSec: Float = 10f
+    val maxDeltaSec: Float = 10f,
+    val useMph: Boolean = true,
+    val speedAlertLimit: Float = 80f
 )
 
 class SettingsRepository(private val dataStore: DataStore<Preferences>) {
@@ -29,6 +31,8 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val SAMPLE_INTERVAL = longPreferencesKey("sample_interval")
         val MIN_DELTA_SEC = floatPreferencesKey("min_delta_sec")
         val MAX_DELTA_SEC = floatPreferencesKey("max_delta_sec")
+        val USE_MPH = booleanPreferencesKey("use_mph")
+        val SPEED_ALERT_LIMIT = floatPreferencesKey("speed_alert_limit")
     }
 
     val settingsFlow: Flow<AppSettings> = dataStore.data
@@ -42,7 +46,9 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
                 backgroundTrackingEnabled = preferences[PreferencesKeys.BACKGROUND_TRACKING] ?: true,
                 sampleIntervalMs = preferences[PreferencesKeys.SAMPLE_INTERVAL] ?: 1000L,
                 minDeltaSec = preferences[PreferencesKeys.MIN_DELTA_SEC] ?: 0.3f,
-                maxDeltaSec = preferences[PreferencesKeys.MAX_DELTA_SEC] ?: 10f
+                maxDeltaSec = preferences[PreferencesKeys.MAX_DELTA_SEC] ?: 10f,
+                useMph = preferences[PreferencesKeys.USE_MPH] ?: true,
+                speedAlertLimit = preferences[PreferencesKeys.SPEED_ALERT_LIMIT] ?: 80f
             )
         }
 
@@ -80,6 +86,14 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun updateMaxDeltaSec(value: Float) {
         dataStore.edit { it[PreferencesKeys.MAX_DELTA_SEC] = value }
+    }
+
+    suspend fun updateUseMph(value: Boolean) {
+        dataStore.edit { it[PreferencesKeys.USE_MPH] = value }
+    }
+
+    suspend fun updateSpeedAlertLimit(value: Float) {
+        dataStore.edit { it[PreferencesKeys.SPEED_ALERT_LIMIT] = value }
     }
 
     suspend fun resetToDefaults() {

@@ -36,6 +36,7 @@ fun TripsScreen(
     onBack: () -> Unit
 ) {
     val trips by viewModel.trips.collectAsState()
+    val settings by viewModel.settings.collectAsState()
 
     Scaffold(
         topBar = {
@@ -57,6 +58,7 @@ fun TripsScreen(
             items(trips) { trip ->
                 TripItem(
                     trip = trip,
+                    useMph = settings.useMph,
                     onClick = { onTripClick(trip.id) }
                 )
             }
@@ -67,11 +69,21 @@ fun TripsScreen(
 @Composable
 fun TripItem(
     trip: com.example.gpsspeedometer.data.TripEntity,
+    useMph: Boolean,
     onClick: () -> Unit
 ) {
     val dateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
     val dateStr = dateFormat.format(Date(trip.startTime))
-    val distMiles = trip.distanceMeters * 0.000621371f
+    val distStr = if (useMph) {
+        String.format("%.2f mi", trip.distanceMeters * 0.000621371f)
+    } else {
+        String.format("%.2f km", trip.distanceMeters / 1000f)
+    }
+    val maxSpeedStr = if (useMph) {
+        String.format("Max: %.1f MPH", trip.maxSpeedMph)
+    } else {
+        String.format("Max: %.1f KM/H", trip.maxSpeedMph * 1.60934f)
+    }
 
     Card(
         modifier = Modifier
@@ -84,9 +96,9 @@ fun TripItem(
             Text(text = dateStr, style = MaterialTheme.typography.bodySmall)
             Spacer(modifier = Modifier.padding(4.dp))
             Row {
-                Text(text = String.format("%.2f mi", distMiles), style = MaterialTheme.typography.bodyMedium)
+                Text(text = distStr, style = MaterialTheme.typography.bodyMedium)
                 Spacer(modifier = Modifier.weight(1f))
-                Text(text = String.format("Max: %.1f MPH", trip.maxSpeedMph), style = MaterialTheme.typography.bodyMedium)
+                Text(text = maxSpeedStr, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }

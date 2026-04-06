@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.gpsspeedometer.data.SettingsRepository
+import com.example.gpsspeedometer.data.AppSettings
 import com.example.gpsspeedometer.data.TripDao
 import com.example.gpsspeedometer.data.TripEntity
 import com.example.gpsspeedometer.data.TripPointEntity
@@ -17,10 +19,16 @@ import java.io.OutputStreamWriter
 
 enum class ExportType { SUMMARY, POINTS }
 
-class TripsViewModel(private val tripDao: TripDao) : ViewModel() {
+class TripsViewModel(
+    private val tripDao: TripDao,
+    private val settingsRepository: SettingsRepository
+) : ViewModel() {
 
     val trips = tripDao.getAllTrips()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val settings = settingsRepository.settingsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
 
     fun deleteTrip(trip: TripEntity) {
         viewModelScope.launch {
@@ -64,11 +72,14 @@ class TripsViewModel(private val tripDao: TripDao) : ViewModel() {
         }
     }
 
-    class Factory(private val tripDao: TripDao) : ViewModelProvider.Factory {
+    class Factory(
+        private val tripDao: TripDao,
+        private val settingsRepository: SettingsRepository
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             if (modelClass.isAssignableFrom(TripsViewModel::class.java)) {
-                return TripsViewModel(tripDao) as T
+                return TripsViewModel(tripDao, settingsRepository) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class")
         }
