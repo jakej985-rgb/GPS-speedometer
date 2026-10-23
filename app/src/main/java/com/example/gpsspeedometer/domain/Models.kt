@@ -18,5 +18,17 @@ data class TripStats(
     val accuracyMeters: Float = 0f,
     val isRecording: Boolean = false,
     val isPaused: Boolean = false,
-    val lastLocationTimestamp: Long = 0
+    val lastLocationTimestamp: Long = 0,
+    val currentLat: Double = 0.0,
+    val currentLng: Double = 0.0,
+    val speedLimitMph: Int? = null,
+    val roadName: String? = null
+)
+
+data class SpeedLimitInfo(
+    val speedLimitMph: Int? = null,
+    val speedLimitKmh: Int? = null,
+    val roadName: String? = null,
+    val lastQueryTimestamp: Long = 0L,
+    val isLoading: Boolean = false
 )

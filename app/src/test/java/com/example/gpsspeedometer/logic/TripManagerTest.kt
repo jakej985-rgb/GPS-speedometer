@@ -1,5 +1,6 @@
 package com.example.gpsspeedometer.logic
 
+import android.location.Location
 import com.example.gpsspeedometer.data.AppSettings
 import com.example.gpsspeedometer.data.SettingsRepository
 import com.example.gpsspeedometer.data.TripDao
@@ -10,17 +11,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
-import android.location.Location
 import org.junit.Assert.assertEquals
-import org.junit.After
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mockStatic
 import org.mockito.kotlin.any
-import org.mockito.kotlin.doReturn
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
-import kotlinx.coroutines.cancel
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripManagerTest {
@@ -38,8 +39,9 @@ class TripManagerTest {
         val settingsFlow = MutableStateFlow(AppSettings(
             accuracyThresholdMeters = 25f,
             minSegmentMeters = 3f,
-            emaAlpha = 0.5f, // Use 0.5 for easier calculation
-            historyWindowSamples = 10
+            emaAlpha = 0.5f,
+            historyWindowSamples = 10,
+            maxPlausibleMph = 200f
         ))
         whenever(settingsRepository.settingsFlow).thenReturn(settingsFlow)
 
@@ -48,11 +50,6 @@ class TripManagerTest {
 
     @Test
     fun `test speed smoothing`() = testScope.runTest {
-        // Initial speed 0
-        // Input speed 10 mps (~22.3 mph)
-        // alpha 0.5
-        // Smoothed = 0.5 * 22.3 + 0.5 * 0 = 11.15
-
         val location = LocationSample(
             timestamp = 1000,
             lat = 0.0,
@@ -65,7 +62,7 @@ class TripManagerTest {
         tripManager.processLocation(location)
 
         val state = tripManager.tripState.value
-        assertEquals(11.18f, state.currentSpeedMph, 0.1f) // 10 mps * 2.23694 = 22.3694. 22.3694 * 0.5 = 11.1847
+        assertEquals(11.18f, state.currentSpeedMph, 0.1f)
     }
 
     @Test
@@ -75,25 +72,126 @@ class TripManagerTest {
                 Location.distanceBetween(any(), any(), any(), any(), any())
             }.thenAnswer { invocation ->
                 val results = invocation.arguments[4] as FloatArray
-                results[0] = 11.1f // mock distance
+                results[0] = 11.1f
                 null
             }
 
-            // Mock start trip
             whenever(tripDao.insertTrip(any())).thenReturn(1L)
             tripManager.startTrip()
 
-            // Point 1
             val loc1 = LocationSample(1000, 0.0, 0.0, 10f, 5f, 0f)
             tripManager.processLocation(loc1)
 
-            // Point 2 (Valid segment)
-            // Move 10 meters approx (0.0001 deg lat ~ 11m)
             val loc2 = LocationSample(2000, 0.0001, 0.0, 10f, 5f, 0f)
             tripManager.processLocation(loc2)
 
             val state = tripManager.tripState.value
-            assert(state.distanceMeters > 0f)
+            assertTrue(state.distanceMeters > 0f)
+        }
+    }
+
+    @Test
+    fun `test pause stops distance accumulation`() = testScope.runTest {
+        mockStatic(Location::class.java).use { mockLocation ->
+            mockLocation.`when`<Any> {
+                Location.distanceBetween(any(), any(), any(), any(), any())
+            }.thenAnswer { invocation ->
+                val results = invocation.arguments[4] as FloatArray
+                results[0] = 15f
+                null
+            }
+
+            whenever(tripDao.insertTrip(any())).thenReturn(1L)
+            tripManager.startTrip()
+
+            val loc1 = LocationSample(1000, 0.0, 0.0, 10f, 5f, 0f)
+            tripManager.processLocation(loc1)
+
+            val loc2 = LocationSample(2000, 0.0001, 0.0, 10f, 5f, 0f)
+            tripManager.processLocation(loc2)
+            val distBeforePause = tripManager.tripState.value.distanceMeters
+
+            tripManager.pauseTrip()
+            assertTrue(tripManager.tripState.value.isPaused)
+
+            // Location arrives while paused
+            val loc3 = LocationSample(3000, 0.0002, 0.0, 10f, 5f, 0f)
+            tripManager.processLocation(loc3)
+
+            // Distance should NOT increase while paused
+            assertEquals(distBeforePause, tripManager.tripState.value.distanceMeters, 0.001f)
+            // But live speed should still update
+            assertTrue(tripManager.tripState.value.currentSpeedMph > 0f)
+        }
+    }
+
+    @Test
+    fun `test low accuracy points are filtered from accumulation`() = testScope.runTest {
+        mockStatic(Location::class.java).use { mockLocation ->
+            mockLocation.`when`<Any> {
+                Location.distanceBetween(any(), any(), any(), any(), any())
+            }.thenAnswer { invocation ->
+                val results = invocation.arguments[4] as FloatArray
+                results[0] = 50f
+                null
+            }
+
+            whenever(tripDao.insertTrip(any())).thenReturn(1L)
+            tripManager.startTrip()
+
+            val loc1 = LocationSample(1000, 0.0, 0.0, 10f, 5f, 0f)
+            tripManager.processLocation(loc1)
+
+            // Point with accuracy 50m (exceeds 25m threshold)
+            val locLowAccuracy = LocationSample(2000, 0.001, 0.0, 10f, 50f, 0f)
+            tripManager.processLocation(locLowAccuracy)
+
+            // Distance should remain 0 because low accuracy point is rejected
+            assertEquals(0f, tripManager.tripState.value.distanceMeters, 0.001f)
+        }
+    }
+
+    @Test
+    fun `test stop trip calculates average speed and updates database`() = testScope.runTest {
+        val existingTrip = TripEntity(
+            id = 1L,
+            name = "Test Trip",
+            startTime = System.currentTimeMillis() - 3600000, // 1 hour ago
+            endTime = 0,
+            elapsedMs = 0,
+            distanceMeters = 0f,
+            maxSpeedMph = 0f,
+            avgSpeedMph = 0f
+        )
+        whenever(tripDao.insertTrip(any())).thenReturn(1L)
+        whenever(tripDao.getTripById(1L)).thenReturn(existingTrip)
+
+        mockStatic(Location::class.java).use { mockLocation ->
+            mockLocation.`when`<Any> {
+                Location.distanceBetween(any(), any(), any(), any(), any())
+            }.thenAnswer { invocation ->
+                val results = invocation.arguments[4] as FloatArray
+                // 16093.4 meters = 10 miles
+                results[0] = 16093.4f
+                null
+            }
+
+            tripManager.startTrip()
+
+            val loc1 = LocationSample(1000, 0.0, 0.0, 10f, 5f, 0f)
+            tripManager.processLocation(loc1)
+
+            val loc2 = LocationSample(2000, 0.1, 0.0, 10f, 5f, 0f)
+            tripManager.processLocation(loc2)
+
+            tripManager.stopTrip()
+
+            val captor = argumentCaptor<TripEntity>()
+            verify(tripDao).updateTrip(captor.capture())
+            val saved = captor.firstValue
+
+            assertEquals(16093.4f, saved.distanceMeters, 1f)
+            assertFalse(tripManager.tripState.value.isRecording)
         }
     }
 }

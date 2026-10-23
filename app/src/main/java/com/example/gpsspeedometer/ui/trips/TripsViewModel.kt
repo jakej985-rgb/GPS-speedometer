@@ -5,13 +5,16 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.gpsspeedometer.data.SettingsRepository
 import com.example.gpsspeedometer.data.AppSettings
+import com.example.gpsspeedometer.data.SettingsRepository
 import com.example.gpsspeedometer.data.TripDao
 import com.example.gpsspeedometer.data.TripEntity
 import com.example.gpsspeedometer.data.TripPointEntity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.BufferedWriter
@@ -30,6 +33,9 @@ class TripsViewModel(
     val settings = settingsRepository.settingsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
 
+    private val _exportEvent = MutableSharedFlow<String>()
+    val exportEvent: SharedFlow<String> = _exportEvent.asSharedFlow()
+
     fun deleteTrip(trip: TripEntity) {
         viewModelScope.launch {
             tripDao.deleteTrip(trip)
@@ -42,7 +48,11 @@ class TripsViewModel(
 
     fun exportTrip(context: Context, tripId: Long, uri: Uri, type: ExportType) {
         viewModelScope.launch(Dispatchers.IO) {
-            val trip = tripDao.getTripById(tripId) ?: return@launch
+            val trip = tripDao.getTripById(tripId)
+            if (trip == null) {
+                _exportEvent.emit("Export failed: Trip not found")
+                return@launch
+            }
 
             try {
                 context.contentResolver.openOutputStream(uri)?.use { outputStream ->
@@ -53,8 +63,9 @@ class TripsViewModel(
                                 val elapsedSec = trip.elapsedMs / 1000f
                                 val distMiles = trip.distanceMeters * 0.000621371f
                                 val distKm = trip.distanceMeters / 1000f
+                                val escapedName = escapeCsv(trip.name)
 
-                                writer.write("${trip.name},${trip.startTime},${trip.endTime},${elapsedSec},${distMiles},${distKm},${trip.maxSpeedMph},${trip.avgSpeedMph}\n")
+                                writer.write("$escapedName,${trip.startTime},${trip.endTime},$elapsedSec,$distMiles,$distKm,${trip.maxSpeedMph},${trip.avgSpeedMph}\n")
                             }
                             ExportType.POINTS -> {
                                 writer.write("timestamp,lat,lng,accuracy_m,speed_mps,raw_mph,smoothed_mph\n")
@@ -66,8 +77,19 @@ class TripsViewModel(
                         }
                     }
                 }
+                _exportEvent.emit("Export successful")
             } catch (e: Exception) {
-                e.printStackTrace()
+                _exportEvent.emit("Export failed: ${e.localizedMessage ?: "Unknown error"}")
+            }
+        }
+    }
+
+    companion object {
+        fun escapeCsv(value: String): String {
+            return if (value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")) {
+                "\"" + value.replace("\"", "\"\"") + "\""
+            } else {
+                value
             }
         }
     }

@@ -6,17 +6,25 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.gpsspeedometer.data.SettingsRepository
 import com.example.gpsspeedometer.data.AppSettings
+import com.example.gpsspeedometer.data.SettingsRepository
+import com.example.gpsspeedometer.domain.SpeedLimitInfo
+import com.example.gpsspeedometer.location.LocationRepository
 import com.example.gpsspeedometer.logic.TripManager
 import com.example.gpsspeedometer.service.TrackingService
+import com.example.gpsspeedometer.speedlimit.SpeedLimitRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class MainViewModel(
     private val tripManager: TripManager,
+    private val locationRepository: LocationRepository,
+    private val speedLimitRepository: SpeedLimitRepository,
     private val settingsRepository: SettingsRepository,
     private val application: Application
 ) : AndroidViewModel(application) {
@@ -29,6 +37,55 @@ class MainViewModel(
 
     val settings = settingsRepository.settingsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
+
+    val speedLimitInfo: StateFlow<SpeedLimitInfo> = speedLimitRepository.speedLimitFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SpeedLimitInfo())
+
+    private var foregroundLocationJob: Job? = null
+
+    init {
+        // Collect live location for speedometer when not recording in background service
+        viewModelScope.launch {
+            tripState
+                .map { it.isRecording }
+                .distinctUntilChanged()
+                .collect { isRecording ->
+                    if (!isRecording) {
+                        startForegroundLocationUpdates()
+                    } else {
+                        stopForegroundLocationUpdates()
+                    }
+                }
+        }
+
+        // Query road speed limit whenever coordinates change significantly
+        viewModelScope.launch {
+            tripState.collect { state ->
+                if (state.currentLat != 0.0 && state.currentLng != 0.0) {
+                    speedLimitRepository.queryIfNeeded(
+                        lat = state.currentLat,
+                        lng = state.currentLng,
+                        useMph = settings.value.useMph
+                    )
+                }
+            }
+        }
+    }
+
+    private fun startForegroundLocationUpdates() {
+        if (foregroundLocationJob?.isActive == true) return
+        foregroundLocationJob = viewModelScope.launch {
+            val sampleRate = settings.value.sampleIntervalMs
+            locationRepository.getLocationUpdates(sampleRate).collect { location ->
+                tripManager.processLocation(location)
+            }
+        }
+    }
+
+    private fun stopForegroundLocationUpdates() {
+        foregroundLocationJob?.cancel()
+        foregroundLocationJob = null
+    }
 
     fun startTrip() {
         sendCommand(TrackingService.ACTION_START)
@@ -50,31 +107,42 @@ class MainViewModel(
     }
 
     fun resetTrip() {
-         // Reset means stop and discard? or stop and save?
-         // Prompt says "Reset" button. Usually means clear stats.
-         // If recording, maybe stop and discard.
-         // TripManager.stopTrip() saves it.
-         // I might need a `reset()` in TripManager that doesn't save.
-         // For now, I'll just use STOP.
-         sendCommand(TrackingService.ACTION_STOP)
+        sendCommand(TrackingService.ACTION_STOP)
     }
 
     private fun sendCommand(action: String) {
         val intent = Intent(application, TrackingService::class.java).apply {
             this.action = action
         }
-        application.startForegroundService(intent) // Use startForegroundService for Android 8+
+        if (action == TrackingService.ACTION_START) {
+            application.startForegroundService(intent)
+        } else {
+            application.startService(intent)
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopForegroundLocationUpdates()
     }
 
     class Factory(
         private val tripManager: TripManager,
+        private val locationRepository: LocationRepository,
+        private val speedLimitRepository: SpeedLimitRepository,
         private val settingsRepository: SettingsRepository,
         private val application: Application
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             if (modelClass.isAssignableFrom(MainViewModel::class.java)) {
-                return MainViewModel(tripManager, settingsRepository, application) as T
+                return MainViewModel(
+                    tripManager,
+                    locationRepository,
+                    speedLimitRepository,
+                    settingsRepository,
+                    application
+                ) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class")
         }

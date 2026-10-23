@@ -27,5 +27,7 @@ data class TripPointEntity(
     val accuracyMeters: Float,
     val speedMps: Float,
     val rawMph: Float,
-    val smoothedMph: Float
+    val smoothedMph: Float,
+    val speedLimitMph: Int? = null
 )
+

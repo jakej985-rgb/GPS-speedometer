@@ -1,0 +1,14 @@
+#!/bin/bash
+# Push Gatekeeper: Pre-push verification hook
+echo "🛡️ Push Gatekeeper: Running pre-push checks..."
+
+./gradlew -q printVersion
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "❌ Push Gatekeeper: Verification failed! Push aborted."
+    exit 1
+fi
+
+echo "✅ Push Gatekeeper: All checks passed. Proceeding with push."
+exit 0

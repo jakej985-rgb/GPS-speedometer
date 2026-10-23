@@ -15,7 +15,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -24,6 +23,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -59,21 +61,21 @@ fun SettingsScreen(
                 label = "Accuracy Threshold (Meters)",
                 value = settings.accuracyThresholdMeters,
                 range = 5f..100f,
-                onValueChange = { viewModel.updateAccuracyThreshold(it) }
+                onValueChangeFinished = { viewModel.updateAccuracyThreshold(it) }
             )
 
             SettingSlider(
                 label = "Min Segment Distance (Meters)",
                 value = settings.minSegmentMeters,
                 range = 1f..50f,
-                onValueChange = { viewModel.updateMinSegmentMeters(it) }
+                onValueChangeFinished = { viewModel.updateMinSegmentMeters(it) }
             )
 
             SettingSlider(
                 label = "Smoothing Factor (Alpha)",
                 value = settings.emaAlpha,
                 range = 0.01f..1.0f,
-                onValueChange = { viewModel.updateEmaAlpha(it) }
+                onValueChangeFinished = { viewModel.updateEmaAlpha(it) }
             )
 
             SettingSlider(
@@ -81,21 +83,21 @@ fun SettingsScreen(
                 value = settings.historyWindowSamples.toFloat(),
                 range = 60f..3600f,
                 steps = 0,
-                onValueChange = { viewModel.updateHistoryWindow(it.toInt()) }
+                onValueChangeFinished = { viewModel.updateHistoryWindow(it.toInt()) }
             )
 
             SettingSlider(
                 label = "Speed Alert Limit",
                 value = settings.speedAlertLimit,
                 range = 10f..200f,
-                onValueChange = { viewModel.updateSpeedAlertLimit(it) }
+                onValueChangeFinished = { viewModel.updateSpeedAlertLimit(it) }
             )
 
             SettingSlider(
                 label = "Max Plausible Speed (MPH)",
                 value = settings.maxPlausibleMph,
                 range = 50f..500f,
-                onValueChange = { viewModel.updateMaxPlausibleMph(it) }
+                onValueChangeFinished = { viewModel.updateMaxPlausibleMph(it) }
             )
 
             SettingSlider(
@@ -103,21 +105,21 @@ fun SettingsScreen(
                 value = settings.sampleIntervalMs.toFloat(),
                 range = 500f..10000f,
                 steps = 19, // 500ms steps
-                onValueChange = { viewModel.updateSampleInterval(it.toLong()) }
+                onValueChangeFinished = { viewModel.updateSampleInterval(it.toLong()) }
             )
 
             SettingSlider(
                 label = "Min Delta Time (sec)",
                 value = settings.minDeltaSec,
                 range = 0.1f..2f,
-                onValueChange = { viewModel.updateMinDeltaSec(it) }
+                onValueChangeFinished = { viewModel.updateMinDeltaSec(it) }
             )
 
             SettingSlider(
                 label = "Max Delta Time (sec)",
                 value = settings.maxDeltaSec,
                 range = 2f..20f,
-                onValueChange = { viewModel.updateMaxDeltaSec(it) }
+                onValueChangeFinished = { viewModel.updateMaxDeltaSec(it) }
             )
 
             Row(
@@ -164,13 +166,16 @@ fun SettingSlider(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     steps: Int = 0,
-    onValueChange: (Float) -> Unit
+    onValueChangeFinished: (Float) -> Unit
 ) {
+    var sliderPosition by remember(value) { mutableFloatStateOf(value) }
+
     Column(modifier = Modifier.padding(vertical = 8.dp)) {
-        Text(text = "$label: ${String.format("%.2f", value)}")
+        Text(text = "$label: ${String.format("%.2f", sliderPosition)}")
         Slider(
-            value = value,
-            onValueChange = onValueChange,
+            value = sliderPosition,
+            onValueChange = { sliderPosition = it },
+            onValueChangeFinished = { onValueChangeFinished(sliderPosition) },
             valueRange = range,
             steps = steps
         )

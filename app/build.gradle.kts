@@ -1,8 +1,24 @@
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
 }
+
+val versionPropsFile = rootProject.file("version.properties")
+val versionProps = Properties().apply {
+    if (versionPropsFile.exists()) {
+        FileInputStream(versionPropsFile).use { load(it) }
+    }
+}
+
+val vMajor = versionProps.getProperty("VERSION_MAJOR", "1")
+val vMinor = versionProps.getProperty("VERSION_MINOR", "0")
+val vPatch = versionProps.getProperty("VERSION_PATCH", "0")
+val vCode = versionProps.getProperty("VERSION_CODE", "1").toInt()
 
 android {
     namespace = "com.example.gpsspeedometer"
@@ -12,8 +28,8 @@ android {
         applicationId = "com.example.gpsspeedometer"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = vCode
+        versionName = "$vMajor.$vMinor.$vPatch"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -81,6 +97,12 @@ dependencies {
     // Extended Icons
     implementation("androidx.compose.material:material-icons-extended:1.6.0")
 
+    // Map (osmdroid OpenStreetMap)
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
+
+    // Networking for Overpass API
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
     testImplementation("org.mockito:mockito-inline:5.2.0")
@@ -91,4 +113,68 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+tasks.register("printVersion") {
+    doLast {
+        println("versionCode: $vCode")
+        println("versionName: $vMajor.$vMinor.$vPatch")
+    }
+}
+
+tasks.register("bumpPatch") {
+    doLast {
+        val props = Properties()
+        FileInputStream(versionPropsFile).use { props.load(it) }
+        val major = props.getProperty("VERSION_MAJOR", "1").toInt()
+        val minor = props.getProperty("VERSION_MINOR", "0").toInt()
+        val patch = props.getProperty("VERSION_PATCH", "0").toInt() + 1
+        val code = props.getProperty("VERSION_CODE", "1").toInt() + 1
+
+        props["VERSION_MAJOR"] = major.toString()
+        props["VERSION_MINOR"] = minor.toString()
+        props["VERSION_PATCH"] = patch.toString()
+        props["VERSION_CODE"] = code.toString()
+
+        FileOutputStream(versionPropsFile).use { props.store(it, null) }
+        println("Bumped to v$major.$minor.$patch (code: $code)")
+    }
+}
+
+tasks.register("bumpMinor") {
+    doLast {
+        val props = Properties()
+        FileInputStream(versionPropsFile).use { props.load(it) }
+        val major = props.getProperty("VERSION_MAJOR", "1").toInt()
+        val minor = props.getProperty("VERSION_MINOR", "0").toInt() + 1
+        val patch = 0
+        val code = props.getProperty("VERSION_CODE", "1").toInt() + 1
+
+        props["VERSION_MAJOR"] = major.toString()
+        props["VERSION_MINOR"] = minor.toString()
+        props["VERSION_PATCH"] = patch.toString()
+        props["VERSION_CODE"] = code.toString()
+
+        FileOutputStream(versionPropsFile).use { props.store(it, null) }
+        println("Bumped to v$major.$minor.$patch (code: $code)")
+    }
+}
+
+tasks.register("bumpMajor") {
+    doLast {
+        val props = Properties()
+        FileInputStream(versionPropsFile).use { props.load(it) }
+        val major = props.getProperty("VERSION_MAJOR", "1").toInt() + 1
+        val minor = 0
+        val patch = 0
+        val code = props.getProperty("VERSION_CODE", "1").toInt() + 1
+
+        props["VERSION_MAJOR"] = major.toString()
+        props["VERSION_MINOR"] = minor.toString()
+        props["VERSION_PATCH"] = patch.toString()
+        props["VERSION_CODE"] = code.toString()
+
+        FileOutputStream(versionPropsFile).use { props.store(it, null) }
+        println("Bumped to v$major.$minor.$patch (code: $code)")
+    }
 }

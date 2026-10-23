@@ -6,8 +6,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.example.gpsspeedometer.GpsApplication
@@ -60,27 +62,59 @@ class TrackingService : LifecycleService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
 
-        when (intent?.action) {
+        if (intent == null) {
+            // Handle restart by system
+            if (tripManager.tripState.value.isRecording) {
+                startForegroundWithNotification(buildNotification(0f, 0f, 0L, isPaused = false))
+                startTracking()
+                return START_STICKY
+            } else {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+        }
+
+        when (intent.action) {
             ACTION_START -> {
-                startForeground(NOTIFICATION_ID, buildNotification(0f, 0f, 0L))
+                startForegroundWithNotification(buildNotification(0f, 0f, 0L, isPaused = false))
                 startTracking()
             }
             ACTION_PAUSE -> {
                 tripManager.pauseTrip()
-                stopLocationUpdates()
+                val stats = tripManager.tripState.value
+                updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs, isPaused = true)
             }
             ACTION_RESUME -> {
                 tripManager.resumeTrip()
-                startLocationUpdates()
+                val stats = tripManager.tripState.value
+                updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs, isPaused = false)
             }
             ACTION_STOP -> {
                 stopTracking()
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
                 stopSelf()
             }
         }
 
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    private fun startForegroundWithNotification(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun startTracking() {
@@ -93,6 +127,7 @@ class TrackingService : LifecycleService() {
         tripManager.stopTrip()
         stopLocationUpdates()
         statsJob?.cancel()
+        statsJob = null
     }
 
     private fun startLocationUpdates() {
@@ -114,26 +149,32 @@ class TrackingService : LifecycleService() {
         statsJob?.cancel()
         statsJob = tripManager.tripState
             .onEach { stats ->
-                updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs)
+                updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs, stats.isPaused)
             }
             .launchIn(lifecycleScope)
     }
 
-    private fun updateNotification(mph: Float, distanceMeters: Float, elapsedMs: Long) {
-        val notification = buildNotification(mph, distanceMeters, elapsedMs)
+    private fun updateNotification(mph: Float, distanceMeters: Float, elapsedMs: Long, isPaused: Boolean) {
+        val notification = buildNotification(mph, distanceMeters, elapsedMs, isPaused)
         notificationManager.notify(NOTIFICATION_ID, notification)
     }
 
-    private fun buildNotification(mph: Float, distanceMeters: Float, elapsedMs: Long): Notification {
+    private fun buildNotification(mph: Float, distanceMeters: Float, elapsedMs: Long, isPaused: Boolean): Notification {
         val distanceMiles = distanceMeters * 0.000621371
         val elapsedSec = elapsedMs / 1000
         val h = elapsedSec / 3600
         val m = (elapsedSec % 3600) / 60
         val s = elapsedSec % 60
         val timeStr = String.format("%02d:%02d:%02d", h, m, s)
-        val contentText = String.format("Speed: %.1f MPH | Dist: %.2f mi | Time: %s", mph, distanceMiles, timeStr)
 
-        val pendingIntent = PendingIntent.getActivity(
+        val title = if (isPaused) "Trip Paused" else "Trip in Progress"
+        val contentText = if (isPaused) {
+            String.format("Paused | Dist: %.2f mi | Time: %s", distanceMiles, timeStr)
+        } else {
+            String.format("Speed: %.1f MPH | Dist: %.2f mi | Time: %s", mph, distanceMiles, timeStr)
+        }
+
+        val openAppPendingIntent = PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java),
@@ -141,16 +182,43 @@ class TrackingService : LifecycleService() {
         )
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Trip in Progress")
+            .setContentTitle(title)
             .setContentText(contentText)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setContentIntent(openAppPendingIntent)
+            .setOngoing(!isPaused)
+            .setOnlyAlertOnce(true)
 
         if (Build.VERSION.SDK_INT >= 34) {
-             builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         }
+
+        // Add Action Buttons
+        if (isPaused) {
+            val resumeIntent = PendingIntent.getService(
+                this,
+                101,
+                Intent(this, TrackingService::class.java).apply { action = ACTION_RESUME },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            builder.addAction(android.R.drawable.ic_media_play, "Resume", resumeIntent)
+        } else {
+            val pauseIntent = PendingIntent.getService(
+                this,
+                102,
+                Intent(this, TrackingService::class.java).apply { action = ACTION_PAUSE },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            builder.addAction(android.R.drawable.ic_media_pause, "Pause", pauseIntent)
+        }
+
+        val stopIntent = PendingIntent.getService(
+            this,
+            103,
+            Intent(this, TrackingService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopIntent)
 
         return builder.build()
     }
