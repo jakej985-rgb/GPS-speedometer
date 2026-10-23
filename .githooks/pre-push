@@ -1,14 +1,38 @@
 #!/bin/bash
-# Push Gatekeeper: Pre-push verification hook
-echo "🛡️ Push Gatekeeper: Running pre-push checks..."
+# Local Push Gatekeeper: Pre-push verification hook
+echo "🛡️ Push Gatekeeper: Running local quality gates..."
 
+# 1. Verify Gradle version configuration
 ./gradlew -q printVersion
 EXIT_CODE=$?
-
 if [ $EXIT_CODE -ne 0 ]; then
-    echo "❌ Push Gatekeeper: Verification failed! Push aborted."
+    echo "❌ Push Gatekeeper: Gradle configuration error! Push blocked."
     exit 1
 fi
 
-echo "✅ Push Gatekeeper: All checks passed. Proceeding with push."
+# 2. Check Android SDK availability for local testing
+SDK_FOUND=false
+if [ -n "$ANDROID_HOME" ] && [ -d "$ANDROID_HOME" ]; then
+    SDK_FOUND=true
+elif [ -f "local.properties" ] && grep -q "sdk.dir" local.properties; then
+    SDK_FOUND=true
+elif [ -d "$HOME/Android/Sdk/platforms/android-34" ]; then
+    SDK_FOUND=true
+fi
+
+if [ "$SDK_FOUND" = true ]; then
+    echo "🧪 Push Gatekeeper: Running local unit tests (testDebugUnitTest)..."
+    ./gradlew testDebugUnitTest
+    TEST_EXIT=$?
+    if [ $TEST_EXIT -ne 0 ]; then
+        echo "❌ Push Gatekeeper: Local unit tests failed! Fix errors before pushing."
+        exit 1
+    fi
+    echo "✅ Push Gatekeeper: All unit tests passed locally."
+else
+    echo "⚠️ Push Gatekeeper: Android SDK not detected locally."
+    echo "   (Unit tests and lint will be gated remotely by GitHub Actions)."
+fi
+
+echo "✅ Push Gatekeeper: Gatekeeper verification passed. Proceeding with push."
 exit 0
