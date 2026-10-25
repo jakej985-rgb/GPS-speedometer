@@ -13,9 +13,11 @@ import com.example.gpsspeedometer.location.LocationRepository
 import com.example.gpsspeedometer.logic.TripManager
 import com.example.gpsspeedometer.service.TrackingService
 import com.example.gpsspeedometer.speedlimit.SpeedLimitRepository
+import android.util.Log
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -75,9 +77,15 @@ class MainViewModel(
     private fun startForegroundLocationUpdates() {
         if (foregroundLocationJob?.isActive == true) return
         foregroundLocationJob = viewModelScope.launch {
-            val sampleRate = settings.value.sampleIntervalMs
-            locationRepository.getLocationUpdates(sampleRate).collect { location ->
-                tripManager.processLocation(location)
+            try {
+                val sampleRate = settings.value.sampleIntervalMs
+                locationRepository.getLocationUpdates(sampleRate)
+                    .catch { e -> Log.e("MainViewModel", "Error in location updates flow", e) }
+                    .collect { location ->
+                        tripManager.processLocation(location)
+                    }
+            } catch (e: Exception) {
+                Log.e("MainViewModel", "Failed to start location collection", e)
             }
         }
     }
@@ -111,13 +119,17 @@ class MainViewModel(
     }
 
     private fun sendCommand(action: String) {
-        val intent = Intent(application, TrackingService::class.java).apply {
-            this.action = action
-        }
-        if (action == TrackingService.ACTION_START) {
-            application.startForegroundService(intent)
-        } else {
-            application.startService(intent)
+        try {
+            val intent = Intent(application, TrackingService::class.java).apply {
+                this.action = action
+            }
+            if (action == TrackingService.ACTION_START) {
+                application.startForegroundService(intent)
+            } else {
+                application.startService(intent)
+            }
+        } catch (e: Exception) {
+            Log.e("MainViewModel", "Failed to send command $action to TrackingService", e)
         }
     }
 

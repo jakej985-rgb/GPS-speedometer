@@ -76,10 +76,15 @@ class MainActivity : ComponentActivity() {
 fun GpsSpeedometerApp(appContainer: com.example.gpsspeedometer.di.AppContainer) {
     val context = LocalContext.current
     val initialPermissionGranted = remember {
-        ContextCompat.checkSelfPermission(
+        val hasFine = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        hasFine || hasCoarse
     }
     var hasPermissions by remember { mutableStateOf(initialPermissionGranted) }
 
@@ -98,7 +103,8 @@ fun GpsSpeedometerApp(appContainer: com.example.gpsspeedometer.di.AppContainer) 
         contract = ActivityResultContracts.RequestMultiplePermissions(),
         onResult = { perms ->
             val fineLocation = perms[Manifest.permission.ACCESS_FINE_LOCATION] == true
-            hasPermissions = fineLocation
+            val coarseLocation = perms[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+            hasPermissions = fineLocation || coarseLocation
         }
     )
 

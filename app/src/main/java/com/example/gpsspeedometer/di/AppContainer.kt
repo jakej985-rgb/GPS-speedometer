@@ -19,6 +19,7 @@ class AppContainer(private val context: Context) {
     val database: AppDatabase by lazy {
         Room.databaseBuilder(context, AppDatabase::class.java, "gps_speedometer.db")
             .addMigrations(AppDatabase.MIGRATION_1_2)
+            .fallbackToDestructiveMigration()
             .build()
     }
 

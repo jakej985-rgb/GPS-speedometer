@@ -1,6 +1,7 @@
 package com.example.gpsspeedometer.logic
 
 import android.location.Location
+import android.util.Log
 import com.example.gpsspeedometer.data.AppSettings
 import com.example.gpsspeedometer.data.SettingsRepository
 import com.example.gpsspeedometer.data.TripDao
@@ -79,25 +80,29 @@ class TripManager(
         }
 
         scope.launch {
-            val trip = TripEntity(
-                name = "Trip $now",
-                startTime = now,
-                endTime = 0,
-                elapsedMs = 0,
-                distanceMeters = 0f,
-                maxSpeedMph = 0f,
-                avgSpeedMph = 0f
-            )
-            val id = tripDao.insertTrip(trip)
-            currentTripId = id
-            _tripState.update {
-                it.copy(
-                    isRecording = true,
-                    isPaused = false,
+            try {
+                val trip = TripEntity(
+                    name = "Trip $now",
+                    startTime = now,
+                    endTime = 0,
                     elapsedMs = 0,
                     distanceMeters = 0f,
-                    maxSpeedMph = 0f
+                    maxSpeedMph = 0f,
+                    avgSpeedMph = 0f
                 )
+                val id = tripDao.insertTrip(trip)
+                currentTripId = id
+                _tripState.update {
+                    it.copy(
+                        isRecording = true,
+                        isPaused = false,
+                        elapsedMs = 0,
+                        distanceMeters = 0f,
+                        maxSpeedMph = 0f
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("TripManager", "Error inserting trip to database", e)
             }
         }
     }
@@ -121,9 +126,13 @@ class TripManager(
     fun updateCurrentTripName(name: String) {
         val tripId = currentTripId ?: return
         scope.launch {
-            val trip = tripDao.getTripById(tripId)
-            if (trip != null) {
-                tripDao.updateTrip(trip.copy(name = name))
+            try {
+                val trip = tripDao.getTripById(tripId)
+                if (trip != null) {
+                    tripDao.updateTrip(trip.copy(name = name))
+                }
+            } catch (e: Exception) {
+                Log.e("TripManager", "Error updating trip name", e)
             }
         }
     }
@@ -156,18 +165,22 @@ class TripManager(
         totalPausedDurationMs = 0L
 
         scope.launch {
-            if (tripId != null) {
-                val trip = tripDao.getTripById(tripId)
-                if (trip != null) {
-                    val updatedTrip = trip.copy(
-                        endTime = now,
-                        elapsedMs = finalElapsedMs,
-                        distanceMeters = finalState.distanceMeters,
-                        maxSpeedMph = finalState.maxSpeedMph,
-                        avgSpeedMph = calculatedAvgMph
-                    )
-                    tripDao.updateTrip(updatedTrip)
+            try {
+                if (tripId != null) {
+                    val trip = tripDao.getTripById(tripId)
+                    if (trip != null) {
+                        val updatedTrip = trip.copy(
+                            endTime = now,
+                            elapsedMs = finalElapsedMs,
+                            distanceMeters = finalState.distanceMeters,
+                            maxSpeedMph = finalState.maxSpeedMph,
+                            avgSpeedMph = calculatedAvgMph
+                        )
+                        tripDao.updateTrip(updatedTrip)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e("TripManager", "Error updating trip on stop", e)
             }
         }
     }
@@ -322,19 +335,23 @@ class TripManager(
     ) {
         val tripId = currentTripId ?: return
         scope.launch {
-            tripDao.insertTripPoint(
-                TripPointEntity(
-                    tripId = tripId,
-                    timestamp = location.timestamp,
-                    lat = location.lat,
-                    lng = location.lng,
-                    accuracyMeters = location.accuracyMeters,
-                    speedMps = location.speedMps,
-                    rawMph = rawMph,
-                    smoothedMph = smoothedMph,
-                    speedLimitMph = speedLimitMph
+            try {
+                tripDao.insertTripPoint(
+                    TripPointEntity(
+                        tripId = tripId,
+                        timestamp = location.timestamp,
+                        lat = location.lat,
+                        lng = location.lng,
+                        accuracyMeters = location.accuracyMeters,
+                        speedMps = location.speedMps,
+                        rawMph = rawMph,
+                        smoothedMph = smoothedMph,
+                        speedLimitMph = speedLimitMph
+                    )
                 )
-            )
+            } catch (e: Exception) {
+                Log.e("TripManager", "Error inserting trip point", e)
+            }
         }
     }
 }

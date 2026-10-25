@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
@@ -74,46 +75,59 @@ class TrackingService : LifecycleService() {
             }
         }
 
-        when (intent.action) {
-            ACTION_START -> {
-                startForegroundWithNotification(buildNotification(0f, 0f, 0L, isPaused = false))
-                startTracking()
-            }
-            ACTION_PAUSE -> {
-                tripManager.pauseTrip()
-                val stats = tripManager.tripState.value
-                updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs, isPaused = true)
-            }
-            ACTION_RESUME -> {
-                tripManager.resumeTrip()
-                val stats = tripManager.tripState.value
-                updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs, isPaused = false)
-            }
-            ACTION_STOP -> {
-                stopTracking()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                } else {
-                    @Suppress("DEPRECATION")
-                    stopForeground(true)
+        try {
+            when (intent.action) {
+                ACTION_START -> {
+                    startForegroundWithNotification(buildNotification(0f, 0f, 0L, isPaused = false))
+                    startTracking()
                 }
-                stopSelf()
+                ACTION_PAUSE -> {
+                    tripManager.pauseTrip()
+                    val stats = tripManager.tripState.value
+                    updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs, isPaused = true)
+                }
+                ACTION_RESUME -> {
+                    tripManager.resumeTrip()
+                    val stats = tripManager.tripState.value
+                    updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs, isPaused = false)
+                }
+                ACTION_STOP -> {
+                    stopTracking()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        stopForeground(true)
+                    }
+                    stopSelf()
+                }
             }
+        } catch (e: Exception) {
+            Log.e("TrackingService", "Error handling onStartCommand action ${intent.action}", e)
         }
 
         return START_NOT_STICKY
     }
 
     private fun startForegroundWithNotification(notification: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e("TrackingService", "Failed to start foreground with location type, attempting fallback", e)
+            try {
+                startForeground(NOTIFICATION_ID, notification)
+            } catch (e2: Exception) {
+                Log.e("TrackingService", "Fatal error starting foreground service", e2)
+            }
         }
     }
 
@@ -155,8 +169,12 @@ class TrackingService : LifecycleService() {
     }
 
     private fun updateNotification(mph: Float, distanceMeters: Float, elapsedMs: Long, isPaused: Boolean) {
-        val notification = buildNotification(mph, distanceMeters, elapsedMs, isPaused)
-        notificationManager.notify(NOTIFICATION_ID, notification)
+        try {
+            val notification = buildNotification(mph, distanceMeters, elapsedMs, isPaused)
+            notificationManager.notify(NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.e("TrackingService", "Failed to update notification", e)
+        }
     }
 
     private fun buildNotification(mph: Float, distanceMeters: Float, elapsedMs: Long, isPaused: Boolean): Notification {
@@ -184,7 +202,7 @@ class TrackingService : LifecycleService() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(contentText)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(openAppPendingIntent)
             .setOngoing(!isPaused)
             .setOnlyAlertOnce(true)
@@ -201,7 +219,7 @@ class TrackingService : LifecycleService() {
                 Intent(this, TrackingService::class.java).apply { action = ACTION_RESUME },
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
-            builder.addAction(android.R.drawable.ic_media_play, "Resume", resumeIntent)
+            builder.addAction(R.drawable.ic_play, "Resume", resumeIntent)
         } else {
             val pauseIntent = PendingIntent.getService(
                 this,
@@ -209,7 +227,7 @@ class TrackingService : LifecycleService() {
                 Intent(this, TrackingService::class.java).apply { action = ACTION_PAUSE },
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
-            builder.addAction(android.R.drawable.ic_media_pause, "Pause", pauseIntent)
+            builder.addAction(R.drawable.ic_pause, "Pause", pauseIntent)
         }
 
         val stopIntent = PendingIntent.getService(
@@ -218,7 +236,7 @@ class TrackingService : LifecycleService() {
             Intent(this, TrackingService::class.java).apply { action = ACTION_STOP },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopIntent)
+        builder.addAction(R.drawable.ic_stop, "Stop", stopIntent)
 
         return builder.build()
     }
