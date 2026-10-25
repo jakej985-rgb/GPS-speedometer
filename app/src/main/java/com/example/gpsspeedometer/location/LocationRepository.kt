@@ -30,87 +30,88 @@ class LocationRepository(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun getLocationUpdates(intervalMs: Long): Flow<LocationSample> = callbackFlow {
-        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-
-        if (!hasFine && !hasCoarse) {
-            Log.w("LocationRepository", "Cannot request location updates: location permissions missing")
-            channel.close()
-            return@callbackFlow
-        }
-
         var isFusedRegistered = false
         var fusedCallback: LocationCallback? = null
-
-        val isGooglePlayAvailable = try {
-            GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
-        } catch (e: Exception) {
-            false
-        }
-
-        if (isGooglePlayAvailable) {
-            try {
-                val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
-                    .setMinUpdateIntervalMillis(intervalMs)
-                    .build()
-
-                val callback = object : LocationCallback() {
-                    override fun onLocationResult(result: LocationResult) {
-                        result.locations.forEach { location ->
-                            trySend(location.toLocationSample())
-                        }
-                    }
-                }
-                fusedCallback = callback
-                client.requestLocationUpdates(request, callback, Looper.getMainLooper())
-                isFusedRegistered = true
-                Log.d("LocationRepository", "Using FusedLocationProviderClient for updates")
-            } catch (e: Exception) {
-                Log.e("LocationRepository", "FusedLocationProviderClient failed, falling back to LocationManager", e)
-                isFusedRegistered = false
-            }
-        }
-
         var isLocationManagerRegistered = false
         var systemListener: LocationListener? = null
 
-        if (!isFusedRegistered && locationManager != null) {
-            try {
-                val listener = object : LocationListener {
-                    override fun onLocationChanged(location: Location) {
-                        trySend(location.toLocationSample())
-                    }
-                    @Deprecated("Deprecated in Java")
-                    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-                    override fun onProviderEnabled(provider: String) {}
-                    override fun onProviderDisabled(provider: String) {}
-                }
-                systemListener = listener
+        try {
+            val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
-                if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                    locationManager.requestLocationUpdates(
-                        LocationManager.GPS_PROVIDER,
-                        intervalMs,
-                        0f,
-                        listener,
-                        Looper.getMainLooper()
-                    )
-                    isLocationManagerRegistered = true
-                    Log.d("LocationRepository", "Registered GPS_PROVIDER fallback listener")
-                } else if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                    locationManager.requestLocationUpdates(
-                        LocationManager.NETWORK_PROVIDER,
-                        intervalMs,
-                        0f,
-                        listener,
-                        Looper.getMainLooper()
-                    )
-                    isLocationManagerRegistered = true
-                    Log.d("LocationRepository", "Registered NETWORK_PROVIDER fallback listener")
+            if (hasFine || hasCoarse) {
+                val isGooglePlayAvailable = try {
+                    GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
+                } catch (e: Exception) {
+                    false
                 }
-            } catch (e: Exception) {
-                Log.e("LocationRepository", "LocationManager fallback failed", e)
+
+                if (isGooglePlayAvailable) {
+                    try {
+                        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
+                            .setMinUpdateIntervalMillis(intervalMs)
+                            .build()
+
+                        val callback = object : LocationCallback() {
+                            override fun onLocationResult(result: LocationResult) {
+                                result.locations.forEach { location ->
+                                    trySend(location.toLocationSample())
+                                }
+                            }
+                        }
+                        fusedCallback = callback
+                        client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+                        isFusedRegistered = true
+                        Log.d("LocationRepository", "Using FusedLocationProviderClient for updates")
+                    } catch (e: Exception) {
+                        Log.e("LocationRepository", "FusedLocationProviderClient failed, falling back to LocationManager", e)
+                        isFusedRegistered = false
+                    }
+                }
+
+                if (!isFusedRegistered && locationManager != null) {
+                    try {
+                        val listener = object : LocationListener {
+                            override fun onLocationChanged(location: Location) {
+                                trySend(location.toLocationSample())
+                            }
+                            @Deprecated("Deprecated in Java")
+                            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                            override fun onProviderEnabled(provider: String) {}
+                            override fun onProviderDisabled(provider: String) {}
+                        }
+                        systemListener = listener
+
+                        if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                            locationManager.requestLocationUpdates(
+                                LocationManager.GPS_PROVIDER,
+                                intervalMs,
+                                0f,
+                                listener,
+                                Looper.getMainLooper()
+                            )
+                            isLocationManagerRegistered = true
+                            Log.d("LocationRepository", "Registered GPS_PROVIDER fallback listener")
+                        } else if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                            locationManager.requestLocationUpdates(
+                                LocationManager.NETWORK_PROVIDER,
+                                intervalMs,
+                                0f,
+                                listener,
+                                Looper.getMainLooper()
+                            )
+                            isLocationManagerRegistered = true
+                            Log.d("LocationRepository", "Registered NETWORK_PROVIDER fallback listener")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("LocationRepository", "LocationManager fallback failed", e)
+                    }
+                }
+            } else {
+                Log.w("LocationRepository", "Cannot request location updates: location permissions missing")
             }
+        } catch (e: Exception) {
+            Log.e("LocationRepository", "Unexpected error setting up location updates", e)
         }
 
         awaitClose {

@@ -47,15 +47,26 @@ import com.example.gpsspeedometer.ui.trips.TripDetailScreen
 import com.example.gpsspeedometer.ui.trips.TripsScreen
 import com.example.gpsspeedometer.ui.trips.TripsViewModel
 import org.osmdroid.config.Configuration
+import java.io.File
+import android.util.Log
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Initialize osmdroid configuration
-        val prefs = applicationContext.getSharedPreferences("${packageName}_osm", Context.MODE_PRIVATE)
-        Configuration.getInstance().load(applicationContext, prefs)
-        Configuration.getInstance().userAgentValue = packageName
+        // Initialize osmdroid configuration safely
+        try {
+            val prefs = applicationContext.getSharedPreferences("${packageName}_osm", Context.MODE_PRIVATE)
+            val osmConfig = Configuration.getInstance()
+            val basePath = File(cacheDir, "osmdroid")
+            if (!basePath.exists()) basePath.mkdirs()
+            osmConfig.osmdroidBasePath = basePath
+            osmConfig.osmdroidTileCache = File(basePath, "tiles")
+            osmConfig.load(applicationContext, prefs)
+            osmConfig.userAgentValue = packageName
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error configuring osmdroid", e)
+        }
 
         val appContainer = (application as GpsApplication).container
 
