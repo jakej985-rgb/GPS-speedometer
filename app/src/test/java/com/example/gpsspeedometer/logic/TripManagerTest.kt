@@ -177,6 +177,7 @@ class TripManagerTest {
             }
 
             tripManager.startTrip()
+            testScheduler.advanceUntilIdle()
 
             val loc1 = LocationSample(1000, 0.0, 0.0, 10f, 5f, 0f)
             tripManager.processLocation(loc1)
@@ -185,6 +186,7 @@ class TripManagerTest {
             tripManager.processLocation(loc2)
 
             tripManager.stopTrip()
+            testScheduler.advanceUntilIdle()
 
             val captor = argumentCaptor<TripEntity>()
             verify(tripDao).updateTrip(captor.capture())
