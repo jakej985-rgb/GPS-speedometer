@@ -37,10 +37,43 @@ android {
         }
     }
 
+    val keystorePropsFile = rootProject.file("keystore.properties")
+    val keystoreProps = Properties().apply {
+        if (keystorePropsFile.exists()) {
+            FileInputStream(keystorePropsFile).use { load(it) }
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            val keyPath = System.getenv("KEYSTORE_PATH")
+                ?: keystoreProps.getProperty("KEYSTORE_PATH")
+                ?: "release.jks"
+            val storePass = System.getenv("KEYSTORE_PASSWORD")
+                ?: keystoreProps.getProperty("KEYSTORE_PASSWORD")
+            val keyAliasName = System.getenv("KEY_ALIAS")
+                ?: keystoreProps.getProperty("KEY_ALIAS")
+            val keyPass = System.getenv("KEY_PASSWORD")
+                ?: keystoreProps.getProperty("KEY_PASSWORD")
+
+            val storeFileObj = rootProject.file(keyPath)
+            if (storeFileObj.exists() && storePass != null && keyAliasName != null && keyPass != null) {
+                storeFile = storeFileObj
+                storePassword = storePass
+                keyAlias = keyAliasName
+                keyPassword = keyPass
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile != null) {
+                signingConfig = releaseSigning
+            }
         }
     }
     compileOptions {
@@ -181,4 +214,8 @@ tasks.register("bumpMajor") {
         FileOutputStream(versionPropsFile).use { props.store(it, null) }
         println("Bumped to v$major.$minor.$patch (code: $code)")
     }
+}
+
+kotlin {
+    jvmToolchain(17)
 }

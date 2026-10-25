@@ -6,3 +6,9 @@ app/build/
 local.properties
 .DS_Store
 
+# Signing keys
+*.jks
+*.keystore
+keystore.properties
+release.jks
+
