@@ -29,6 +29,12 @@ class GpsApplication : Application() {
         }
 
         try {
+            com.example.gpsspeedometer.ui.map.AppTileSources.setupOsmdroid(this)
+        } catch (e: Exception) {
+            Log.e("GpsApplication", "Failed to initialize osmdroid", e)
+        }
+
+        try {
             container = AppContainer(this)
         } catch (e: Exception) {
             Log.e("GpsApplication", "Failed to initialize AppContainer", e)

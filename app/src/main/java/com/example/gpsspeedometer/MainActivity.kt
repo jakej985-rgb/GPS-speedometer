@@ -64,31 +64,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         // Initialize osmdroid configuration safely
-        try {
-            val prefs = applicationContext.getSharedPreferences("${packageName}_osm", Context.MODE_PRIVATE)
-            val osmConfig = Configuration.getInstance()
-            val basePath = File(cacheDir, "osmdroid")
-            if (!basePath.exists()) basePath.mkdirs()
-            osmConfig.osmdroidBasePath = basePath
-
-            // Switch to tiles_v2 to instantly flush blocked 403 error tiles
-            val tilesDir = File(basePath, "tiles_v2")
-            if (!tilesDir.exists()) {
-                tilesDir.mkdirs()
-                try {
-                    File(basePath, "tiles").deleteRecursively()
-                } catch (e: Exception) {
-                    Log.w("MainActivity", "Could not purge old tile cache", e)
-                }
-            }
-            osmConfig.osmdroidTileCache = tilesDir
-            osmConfig.load(applicationContext, prefs)
-
-            // OpenStreetMap strictly blocks com.example.* with HTTP 403 Forbidden
-            osmConfig.userAgentValue = "GPS-Speedometer-App/${BuildConfig.VERSION_NAME} (https://github.com/jakej985-rgb/GPS-speedometer; Android)"
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error configuring osmdroid", e)
-        }
+        com.example.gpsspeedometer.ui.map.AppTileSources.setupOsmdroid(applicationContext)
 
         val appContainer = (application as GpsApplication).container
 

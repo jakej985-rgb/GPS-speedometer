@@ -95,7 +95,7 @@ class SpeedLimitRepository(
 
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "GPS-Speedometer-Android/1.0 (open-source; Android)")
+                .header("User-Agent", "GPS-Speedometer-App/1.0 (+https://github.com/jakej985-rgb/GPS-speedometer; contact: jakej985@gmail.com; Android)")
                 .build()
 
             client.newCall(request).execute().use { response ->

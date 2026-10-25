@@ -27,10 +27,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.gpsspeedometer.ui.components.SpeedLimitSign
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import android.widget.Toast
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.CopyrightOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 
@@ -47,14 +51,23 @@ fun MapScreen(
     val pastTripPoints by viewModel.pastTripPoints.collectAsState()
     val pastTrip by viewModel.pastTrip.collectAsState()
 
+    var useCartoLayer by remember { mutableStateOf(false) }
+
     val isPastTripView = pastTrip != null || pastTripPoints.isNotEmpty()
     val title = pastTrip?.name ?: if (isPastTripView) "Trip Route" else "Live Road Map"
 
     val mapView = remember {
         MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            setTileSource(AppTileSources.OpenStreetMap)
             setMultiTouchControls(true)
             controller.setZoom(16.5)
+
+            // Legal OpenStreetMap attribution overlay
+            val copyrightOverlay = CopyrightOverlay(context).apply {
+                setAlignRight(true)
+                setTextSize(10)
+            }
+            overlays.add(copyrightOverlay)
         }
     }
 
@@ -144,6 +157,20 @@ fun MapScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            useCartoLayer = !useCartoLayer
+                            val newSource = if (useCartoLayer) AppTileSources.CartoVoyager else AppTileSources.OpenStreetMap
+                            mapView.setTileSource(newSource)
+                            mapView.invalidate()
+                            val name = if (useCartoLayer) "Carto Voyager" else "OpenStreetMap"
+                            Toast.makeText(context, "Map layer: $name", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Icon(Icons.Default.Layers, contentDescription = "Toggle Map Layer")
                     }
                 }
             )
