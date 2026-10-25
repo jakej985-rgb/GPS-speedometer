@@ -171,8 +171,8 @@ class TripManagerTest {
                 Location.distanceBetween(any(), any(), any(), any(), any())
             }.thenAnswer { invocation ->
                 val results = invocation.arguments[4] as FloatArray
-                // 16093.4 meters = 10 miles
-                results[0] = 16093.4f
+                // 25 meters in 1 second = ~55.9 mph (well below maxPlausibleMph threshold)
+                results[0] = 25f
                 null
             }
 
@@ -182,7 +182,7 @@ class TripManagerTest {
             val loc1 = LocationSample(1000, 0.0, 0.0, 10f, 5f, 0f)
             tripManager.processLocation(loc1)
 
-            val loc2 = LocationSample(2000, 0.1, 0.0, 10f, 5f, 0f)
+            val loc2 = LocationSample(2000, 0.0002, 0.0, 10f, 5f, 0f)
             tripManager.processLocation(loc2)
 
             tripManager.stopTrip()
@@ -192,7 +192,7 @@ class TripManagerTest {
             verify(tripDao).updateTrip(captor.capture())
             val saved = captor.firstValue
 
-            assertEquals(16093.4f, saved.distanceMeters, 1f)
+            assertEquals(25f, saved.distanceMeters, 0.1f)
             assertFalse(tripManager.tripState.value.isRecording)
         }
     }
