@@ -104,6 +104,14 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            (this as? com.android.build.gradle.api.ApkVariantOutput)?.outputFileName =
+                "GPS-Speedometer-v${variant.versionName}-${variant.name}.apk"
+        }
+    }
 }
 
 dependencies {

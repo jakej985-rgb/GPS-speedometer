@@ -137,8 +137,8 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.jks
 
-      - name: Build Release APK
-        run: ./gradlew assembleRelease
+      - name: Build Release and Debug APKs
+        run: ./gradlew assembleRelease assembleDebug
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/release.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -155,5 +155,7 @@ jobs:
             - Version Code: `${{ steps.version.outputs.code }}`
             - Automated release build generated from commit `${{ github.sha }}`.
             - Passed Quality & Test Push Gatekeeper.
-          files: app/build/outputs/apk/release/*.apk
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
           token: ${{ secrets.GITHUB_TOKEN }}
