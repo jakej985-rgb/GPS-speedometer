@@ -75,6 +75,13 @@ android {
                 signingConfig = releaseSigning
             }
         }
+        debug {
+            versionNameSuffix = ".dev"
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile != null) {
+                signingConfig = releaseSigning
+            }
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
