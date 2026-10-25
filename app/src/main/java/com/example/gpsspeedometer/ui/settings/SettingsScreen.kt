@@ -148,6 +148,19 @@ fun SettingsScreen(
                 )
             }
 
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Keep Screen Awake", modifier = Modifier.weight(1f))
+                Switch(
+                    checked = settings.keepScreenOn,
+                    onCheckedChange = { viewModel.updateKeepScreenOn(it) }
+                )
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             Button(

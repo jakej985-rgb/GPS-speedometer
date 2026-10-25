@@ -37,14 +37,19 @@ class SpeedLimitRepository(
     suspend fun queryIfNeeded(lat: Double, lng: Double, useMph: Boolean = true) {
         val now = System.currentTimeMillis()
 
-        // Check throttle: if within 100m and less than 30s elapsed, skip network query
-        if (lastQueryTimestamp > 0L) {
+        // 1. Enforce minimum 15-second throttle between network calls to prevent Overpass 429 rate-limiting
+        val timeElapsed = now - lastQueryTimestamp
+        if (lastQueryTimestamp > 0L && timeElapsed < 15_000L) {
+            return
+        }
+
+        // 2. Road segment retention: if we already have a valid speed limit and moved < 350m, retain it
+        val currentInfo = _speedLimitFlow.value
+        if (lastQueryTimestamp > 0L && currentInfo.speedLimitMph != null) {
             val distResults = FloatArray(1)
             Location.distanceBetween(lastQueriedLat, lastQueriedLng, lat, lng, distResults)
             val distMoved = distResults[0]
-            val timeElapsed = now - lastQueryTimestamp
-
-            if (distMoved < 100f && timeElapsed < 30_000L) {
+            if (distMoved < 350f && timeElapsed < 60_000L) {
                 return
             }
         }
@@ -62,8 +67,9 @@ class SpeedLimitRepository(
         }
 
         queryMutex.withLock {
-            // Double-check after acquiring lock
-            if (now - lastQueryTimestamp < 2000L) return
+            // Double-check under lock
+            val nowLocked = System.currentTimeMillis()
+            if (nowLocked - lastQueryTimestamp < 15_000L) return
 
             _speedLimitFlow.value = _speedLimitFlow.value.copy(isLoading = true)
 
@@ -74,8 +80,8 @@ class SpeedLimitRepository(
 
             if (result != null) {
                 synchronized(cache) {
-                    if (cache.size > 50) {
-                        cache.clear() // Simple LRU / eviction
+                    if (cache.size > 200) {
+                        cache.clear()
                     }
                     cache[cacheKey] = result
                 }

@@ -79,6 +79,13 @@ fun TripDetailScreen(
         }
     )
 
+    val exportGpxLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/gpx+xml"),
+        onResult = { uri ->
+            uri?.let { viewModel.exportTrip(context, tripId, it, ExportType.GPX) }
+        }
+    )
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -148,6 +155,15 @@ fun TripDetailScreen(
                 Spacer(modifier = Modifier.height(24.dp))
                 Text("Export Data", style = MaterialTheme.typography.titleLarge)
                 Spacer(modifier = Modifier.height(12.dp))
+
+                FilledTonalButton(
+                    onClick = { exportGpxLauncher.launch("${t.name.replace(" ", "_")}.gpx") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Export GPX (Strava / Earth / Garmin)")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Button(
                     onClick = { exportSummaryLauncher.launch("${t.name}_summary.csv") },

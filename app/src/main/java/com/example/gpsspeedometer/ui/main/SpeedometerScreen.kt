@@ -185,7 +185,7 @@ fun SpeedometerScreen(
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
-                maxItemsInEachRow = 3
+                maxItemsInEachRow = 4
             ) {
                 if (settings.useMph) {
                     val distMiles = tripState.distanceMeters * 0.000621371f
@@ -202,8 +202,10 @@ fun SpeedometerScreen(
                 InfoChip(label = "Time", value = String.format("%02d:%02d:%02d", h, m, s))
 
                 if (settings.useMph) {
+                    InfoChip(label = "Avg Speed", value = String.format("%.1f", tripState.avgSpeedMph))
                     InfoChip(label = "Max Speed", value = String.format("%.1f", tripState.maxSpeedMph))
                 } else {
+                    InfoChip(label = "Avg Speed", value = String.format("%.1f", tripState.avgSpeedKmh))
                     InfoChip(label = "Max Speed", value = String.format("%.1f", tripState.maxSpeedMph * 1.60934f))
                 }
             }

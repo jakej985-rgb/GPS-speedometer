@@ -58,6 +58,10 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
         viewModelScope.launch { repository.updateSpeedAlertLimit(value) }
     }
 
+    fun updateKeepScreenOn(enabled: Boolean) {
+        viewModelScope.launch { repository.updateKeepScreenOn(enabled) }
+    }
+
     fun resetToDefaults() {
         viewModelScope.launch { repository.resetToDefaults() }
     }

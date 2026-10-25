@@ -16,7 +16,8 @@ data class AppSettings(
     val minDeltaSec: Float = 0.3f,
     val maxDeltaSec: Float = 10f,
     val useMph: Boolean = true,
-    val speedAlertLimit: Float = 80f
+    val speedAlertLimit: Float = 80f,
+    val keepScreenOn: Boolean = true
 )
 
 class SettingsRepository(private val dataStore: DataStore<Preferences>) {
@@ -33,6 +34,7 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val MAX_DELTA_SEC = floatPreferencesKey("max_delta_sec")
         val USE_MPH = booleanPreferencesKey("use_mph")
         val SPEED_ALERT_LIMIT = floatPreferencesKey("speed_alert_limit")
+        val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
     }
 
     val settingsFlow: Flow<AppSettings> = dataStore.data
@@ -48,7 +50,8 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
                 minDeltaSec = preferences[PreferencesKeys.MIN_DELTA_SEC] ?: 0.3f,
                 maxDeltaSec = preferences[PreferencesKeys.MAX_DELTA_SEC] ?: 10f,
                 useMph = preferences[PreferencesKeys.USE_MPH] ?: true,
-                speedAlertLimit = preferences[PreferencesKeys.SPEED_ALERT_LIMIT] ?: 80f
+                speedAlertLimit = preferences[PreferencesKeys.SPEED_ALERT_LIMIT] ?: 80f,
+                keepScreenOn = preferences[PreferencesKeys.KEEP_SCREEN_ON] ?: true
             )
         }
 
@@ -94,6 +97,10 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun updateSpeedAlertLimit(value: Float) {
         dataStore.edit { it[PreferencesKeys.SPEED_ALERT_LIMIT] = value }
+    }
+
+    suspend fun updateKeepScreenOn(enabled: Boolean) {
+        dataStore.edit { it[PreferencesKeys.KEEP_SCREEN_ON] = enabled }
     }
 
     suspend fun resetToDefaults() {

@@ -13,6 +13,8 @@ data class TripStats(
     val elapsedMs: Long = 0,
     val distanceMeters: Float = 0f,
     val maxSpeedMph: Float = 0f,
+    val avgSpeedMph: Float = 0f,
+    val avgSpeedKmh: Float = 0f,
     val currentSpeedMph: Float = 0f,
     val currentSpeedKmh: Float = 0f,
     val accuracyMeters: Float = 0f,
@@ -21,6 +23,7 @@ data class TripStats(
     val lastLocationTimestamp: Long = 0,
     val currentLat: Double = 0.0,
     val currentLng: Double = 0.0,
+    val bearing: Float = 0f,
     val speedLimitMph: Int? = null,
     val roadName: String? = null
 )

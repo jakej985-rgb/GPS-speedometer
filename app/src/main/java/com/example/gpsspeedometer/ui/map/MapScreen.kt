@@ -129,10 +129,31 @@ fun MapScreen(
         }
     }
 
+    val livePoints = remember { mutableListOf<GeoPoint>() }
+    val livePolyline = remember {
+        Polyline().apply {
+            outlinePaint.color = primaryColorArgb
+            outlinePaint.strokeWidth = 10f
+        }
+    }
+
     // Live position updates
     LaunchedEffect(tripState.currentLat, tripState.currentLng) {
         if (!isPastTripView && tripState.currentLat != 0.0 && tripState.currentLng != 0.0) {
             val userGeoPoint = GeoPoint(tripState.currentLat, tripState.currentLng)
+
+            // If recording, maintain live route polyline
+            if (tripState.isRecording && !tripState.isPaused) {
+                if (!mapView.overlays.contains(livePolyline)) {
+                    mapView.overlays.add(0, livePolyline)
+                }
+                livePoints.add(userGeoPoint)
+                livePolyline.setPoints(livePoints)
+            } else if (!tripState.isRecording && livePoints.isNotEmpty()) {
+                livePoints.clear()
+                livePolyline.setPoints(emptyList())
+                mapView.overlays.remove(livePolyline)
+            }
 
             // Remove previous user marker and add updated marker
             val existingMarkers = mapView.overlays.filterIsInstance<Marker>()
@@ -142,6 +163,9 @@ fun MapScreen(
                 position = userGeoPoint
                 setTitle("Current Location")
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                if (tripState.bearing != 0f) {
+                    rotation = tripState.bearing
+                }
             }
             mapView.overlays.add(userMarker)
 

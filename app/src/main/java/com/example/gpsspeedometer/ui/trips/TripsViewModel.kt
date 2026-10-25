@@ -19,8 +19,12 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.BufferedWriter
 import java.io.OutputStreamWriter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
-enum class ExportType { SUMMARY, POINTS }
+enum class ExportType { SUMMARY, POINTS, GPX }
 
 class TripsViewModel(
     private val tripDao: TripDao,
@@ -74,6 +78,10 @@ class TripsViewModel(
                                     writer.write("${point.timestamp},${point.lat},${point.lng},${point.accuracyMeters},${point.speedMps},${point.rawMph},${point.smoothedMph}\n")
                                 }
                             }
+                            ExportType.GPX -> {
+                                val points = tripDao.getTripPoints(tripId)
+                                writer.write(buildGpx(trip, points))
+                            }
                         }
                     }
                 }
@@ -91,6 +99,40 @@ class TripsViewModel(
             } else {
                 value
             }
+        }
+
+        fun escapeXml(text: String): String {
+            return text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&apos;")
+        }
+
+        fun buildGpx(trip: TripEntity, points: List<TripPointEntity>): String {
+            val isoDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+            val sb = StringBuilder()
+            sb.append("""<?xml version="1.0" encoding="UTF-8"?>""").append("\n")
+            sb.append("""<gpx version="1.1" creator="GPS Speedometer" xmlns="http://www.topografix.com/GPX/1/1">""").append("\n")
+            sb.append("  <metadata>\n")
+            sb.append("    <name>").append(escapeXml(trip.name)).append("</name>\n")
+            sb.append("    <time>").append(isoDateFormat.format(Date(trip.startTime))).append("</time>\n")
+            sb.append("  </metadata>\n")
+            sb.append("  <trk>\n")
+            sb.append("    <name>").append(escapeXml(trip.name)).append("</name>\n")
+            sb.append("    <trkseg>\n")
+            for (pt in points) {
+                sb.append("      <trkpt lat=\"").append(pt.lat).append("\" lon=\"").append(pt.lng).append("\">\n")
+                sb.append("        <time>").append(isoDateFormat.format(Date(pt.timestamp))).append("</time>\n")
+                sb.append("        <speed>").append(pt.speedMps).append("</speed>\n")
+                sb.append("      </trkpt>\n")
+            }
+            sb.append("    </trkseg>\n")
+            sb.append("  </trk>\n")
+            sb.append("</gpx>\n")
+            return sb.toString()
         }
     }
 

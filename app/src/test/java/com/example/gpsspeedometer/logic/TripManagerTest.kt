@@ -196,4 +196,31 @@ class TripManagerTest {
             assertFalse(tripManager.tripState.value.isRecording)
         }
     }
+
+    @Test
+    fun `test live average speed and bearing tracking`() = testScope.runTest {
+        mockStatic(Location::class.java).use { mockLocation ->
+            mockLocation.`when`<Any> {
+                Location.distanceBetween(any(), any(), any(), any(), any())
+            }.thenAnswer { invocation ->
+                val results = invocation.arguments[4] as FloatArray
+                results[0] = 50f
+                null
+            }
+
+            whenever(tripDao.insertTrip(any())).thenReturn(1L)
+            tripManager.startTrip()
+            testScheduler.advanceUntilIdle()
+
+            val loc1 = LocationSample(1000, 0.0, 0.0, 10f, 5f, 90f)
+            tripManager.processLocation(loc1)
+
+            val loc2 = LocationSample(2000, 0.0005, 0.0, 10f, 5f, 180f)
+            tripManager.processLocation(loc2)
+
+            val state = tripManager.tripState.value
+            assertEquals(180f, state.bearing, 0.01f)
+            assertEquals(50f, state.distanceMeters, 0.1f)
+        }
+    }
 }

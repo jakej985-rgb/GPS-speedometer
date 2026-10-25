@@ -57,7 +57,11 @@ import com.example.gpsspeedometer.ui.trips.TripsScreen
 import com.example.gpsspeedometer.ui.trips.TripsViewModel
 import org.osmdroid.config.Configuration
 import java.io.File
-import android.util.Log
+import android.view.WindowManager
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,6 +71,20 @@ class MainActivity : ComponentActivity() {
         com.example.gpsspeedometer.ui.map.AppTileSources.setupOsmdroid(applicationContext)
 
         val appContainer = (application as GpsApplication).container
+
+        // Keep screen awake while using speedometer if enabled in settings
+        lifecycleScope.launch {
+            appContainer.settingsRepository.settingsFlow
+                .map { it.keepScreenOn }
+                .distinctUntilChanged()
+                .collect { keepAwake ->
+                    if (keepAwake) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                }
+        }
 
         setContent {
             MaterialTheme {

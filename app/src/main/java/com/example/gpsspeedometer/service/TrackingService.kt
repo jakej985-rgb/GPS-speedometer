@@ -36,6 +36,7 @@ class TrackingService : LifecycleService() {
     private var locationJob: Job? = null
     private var statsJob: Job? = null
     private var currentSampleRate: Long = 1000L
+    private var useMph: Boolean = true
 
     override fun onCreate() {
         super.onCreate()
@@ -47,16 +48,23 @@ class TrackingService : LifecycleService() {
 
         createNotificationChannel()
 
-        // Observe settings for sample rate changes
+        // Observe settings for sample rate & unit changes
         settingsRepository.settingsFlow
-            .map { it.sampleIntervalMs }
-            .distinctUntilChanged()
             .catch { e -> Log.e("TrackingService", "Error in settings flow", e) }
-            .onEach { rate ->
-                currentSampleRate = rate
-                if (locationJob?.isActive == true) {
+            .onEach { settings ->
+                val prevRate = currentSampleRate
+                val prevUseMph = useMph
+                currentSampleRate = settings.sampleIntervalMs
+                useMph = settings.useMph
+
+                if (locationJob?.isActive == true && prevRate != currentSampleRate) {
                     stopLocationUpdates()
                     startLocationUpdates()
+                }
+
+                if (prevUseMph != useMph && tripManager.tripState.value.isRecording) {
+                    val stats = tripManager.tripState.value
+                    updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs, stats.isPaused)
                 }
             }
             .launchIn(lifecycleScope)
@@ -191,7 +199,6 @@ class TrackingService : LifecycleService() {
     }
 
     private fun buildNotification(mph: Float, distanceMeters: Float, elapsedMs: Long, isPaused: Boolean): Notification {
-        val distanceMiles = distanceMeters * 0.000621371
         val elapsedSec = elapsedMs / 1000
         val h = elapsedSec / 3600
         val m = (elapsedSec % 3600) / 60
@@ -199,10 +206,21 @@ class TrackingService : LifecycleService() {
         val timeStr = String.format("%02d:%02d:%02d", h, m, s)
 
         val title = if (isPaused) "Trip Paused" else "Trip in Progress"
-        val contentText = if (isPaused) {
-            String.format("Paused | Dist: %.2f mi | Time: %s", distanceMiles, timeStr)
+        val contentText = if (useMph) {
+            val distanceMiles = distanceMeters * 0.000621371f
+            if (isPaused) {
+                String.format("Paused | Dist: %.2f mi | Time: %s", distanceMiles, timeStr)
+            } else {
+                String.format("Speed: %.1f MPH | Dist: %.2f mi | Time: %s", mph, distanceMiles, timeStr)
+            }
         } else {
-            String.format("Speed: %.1f MPH | Dist: %.2f mi | Time: %s", mph, distanceMiles, timeStr)
+            val distanceKm = distanceMeters / 1000f
+            val kmh = mph * 1.609344f
+            if (isPaused) {
+                String.format("Paused | Dist: %.2f km | Time: %s", distanceKm, timeStr)
+            } else {
+                String.format("Speed: %.1f KM/H | Dist: %.2f km | Time: %s", kmh, distanceKm, timeStr)
+            }
         }
 
         val openAppPendingIntent = PendingIntent.getActivity(

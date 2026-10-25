@@ -98,7 +98,9 @@ class TripManager(
                         isPaused = false,
                         elapsedMs = 0,
                         distanceMeters = 0f,
-                        maxSpeedMph = 0f
+                        maxSpeedMph = 0f,
+                        avgSpeedMph = 0f,
+                        avgSpeedKmh = 0f
                     )
                 }
             } catch (e: Exception) {
@@ -158,8 +160,16 @@ class TripManager(
         val elapsedHours = finalElapsedMs / 3600000f
         val distanceMiles = finalState.distanceMeters * 0.000621371f
         val calculatedAvgMph = if (elapsedHours > 0.0001f) (distanceMiles / elapsedHours) else 0f
-
-        _tripState.update { it.copy(isRecording = false, isPaused = false, elapsedMs = finalElapsedMs) }
+        val calculatedAvgKmh = calculatedAvgMph * 1.609344f
+        _tripState.update {
+            it.copy(
+                isRecording = false,
+                isPaused = false,
+                elapsedMs = finalElapsedMs,
+                avgSpeedMph = calculatedAvgMph,
+                avgSpeedKmh = calculatedAvgKmh
+            )
+        }
         currentTripId = null
         tripStartTime = 0L
         totalPausedDurationMs = 0L
@@ -207,6 +217,7 @@ class TripManager(
                     lastLocationTimestamp = location.timestamp,
                     currentLat = location.lat,
                     currentLng = location.lng,
+                    bearing = location.bearing,
                     speedLimitMph = currentSpeedLimit?.speedLimitMph ?: it.speedLimitMph,
                     roadName = currentSpeedLimit?.roadName ?: it.roadName
                 )
@@ -237,11 +248,17 @@ class TripManager(
 
             val newDistance = _tripState.value.distanceMeters + dist
             val newMaxSpeed = max(_tripState.value.maxSpeedMph, smoothedMph)
+            val elapsedHours = currentElapsed / 3600000f
+            val distanceMiles = newDistance * 0.000621371f
+            val liveAvgMph = if (elapsedHours > 0.0001f) (distanceMiles / elapsedHours) else 0f
+            val liveAvgKmh = liveAvgMph * 1.609344f
 
             _tripState.update {
                 it.copy(
                     distanceMeters = newDistance,
                     maxSpeedMph = newMaxSpeed,
+                    avgSpeedMph = liveAvgMph,
+                    avgSpeedKmh = liveAvgKmh,
                     currentSpeedMph = smoothedMph,
                     currentSpeedKmh = location.speedMps * 3.6f,
                     accuracyMeters = location.accuracyMeters,
@@ -249,6 +266,7 @@ class TripManager(
                     lastLocationTimestamp = location.timestamp,
                     currentLat = location.lat,
                     currentLng = location.lng,
+                    bearing = location.bearing,
                     speedLimitMph = currentSpeedLimit?.speedLimitMph ?: it.speedLimitMph,
                     roadName = currentSpeedLimit?.roadName ?: it.roadName
                 )
@@ -259,15 +277,23 @@ class TripManager(
             lastValidLocation = location
         } else {
             // Just update speed & elapsed display
+            val elapsedHours = currentElapsed / 3600000f
+            val distanceMiles = _tripState.value.distanceMeters * 0.000621371f
+            val liveAvgMph = if (elapsedHours > 0.0001f) (distanceMiles / elapsedHours) else 0f
+            val liveAvgKmh = liveAvgMph * 1.609344f
+
             _tripState.update {
                 it.copy(
                     currentSpeedMph = smoothedMph,
                     currentSpeedKmh = location.speedMps * 3.6f,
+                    avgSpeedMph = liveAvgMph,
+                    avgSpeedKmh = liveAvgKmh,
                     accuracyMeters = location.accuracyMeters,
                     elapsedMs = currentElapsed,
                     lastLocationTimestamp = location.timestamp,
                     currentLat = location.lat,
                     currentLng = location.lng,
+                    bearing = location.bearing,
                     speedLimitMph = currentSpeedLimit?.speedLimitMph ?: it.speedLimitMph,
                     roadName = currentSpeedLimit?.roadName ?: it.roadName
                 )
