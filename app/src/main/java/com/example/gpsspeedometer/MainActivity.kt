@@ -247,7 +247,8 @@ fun AppNavigation(appContainer: com.example.gpsspeedometer.di.AppContainer) {
                     appContainer.tripManager,
                     appContainer.speedLimitRepository,
                     appContainer.settingsRepository,
-                    appContainer.database.tripDao()
+                    appContainer.database.tripDao(),
+                    context = context
                 )
             )
             MapScreen(
@@ -267,7 +268,8 @@ fun AppNavigation(appContainer: com.example.gpsspeedometer.di.AppContainer) {
                     appContainer.speedLimitRepository,
                     appContainer.settingsRepository,
                     appContainer.database.tripDao(),
-                    pastTripId = tripId
+                    pastTripId = tripId,
+                    context = context
                 )
             )
             MapScreen(

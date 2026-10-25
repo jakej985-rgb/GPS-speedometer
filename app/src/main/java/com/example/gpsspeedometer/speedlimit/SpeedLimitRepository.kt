@@ -12,6 +12,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import com.example.gpsspeedometer.data.OfflineRoadSegmentEntity
+import com.example.gpsspeedometer.data.OfflineSpeedDao
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
@@ -20,7 +22,8 @@ class SpeedLimitRepository(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
-        .build()
+        .build(),
+    private val offlineSpeedDao: OfflineSpeedDao? = null
 ) {
 
     private val _speedLimitFlow = MutableStateFlow(SpeedLimitInfo())
@@ -49,14 +52,33 @@ class SpeedLimitRepository(
             }
         }
 
-        // If in offline mode, do not transmit any network packets
+        // 1. Check local persistent offline speed DB
+        try {
+            val localSegment = offlineSpeedDao?.getSegmentNear(lat, lng)
+            if (localSegment != null) {
+                val info = SpeedLimitInfo(
+                    speedLimitMph = localSegment.speedLimitMph,
+                    speedLimitKmh = localSegment.speedLimitKmh,
+                    roadName = localSegment.name,
+                    lastQueryTimestamp = System.currentTimeMillis(),
+                    isLoading = false
+                )
+                synchronized(cache) { cache[cacheKey] = info }
+                _speedLimitFlow.value = info
+                return
+            }
+        } catch (e: Exception) {
+            // Room query error, fallback to network
+        }
+
+        // If in offline mode and not in local DB, do not transmit any network packets
         if (offlineMode) {
             return
         }
 
         val now = System.currentTimeMillis()
 
-        // 1. Enforce minimum 15-second throttle between network calls to prevent Overpass 429 rate-limiting
+        // Enforce minimum 15-second throttle between network calls to prevent Overpass 429 rate-limiting
         val timeElapsed = now - lastQueryTimestamp
         if (lastQueryTimestamp > 0L && timeElapsed < 15_000L) {
             return
@@ -217,6 +239,25 @@ class SpeedLimitRepository(
         useMph: Boolean,
         offlineMode: Boolean = false
     ): List<RoadSpeedSegment> = withContext(Dispatchers.IO) {
+        // 1. Check local persistent offline speed DB
+        val localEntities = try {
+            offlineSpeedDao?.getSegmentsInBoundingBox(south, west, north, east) ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        if (localEntities.isNotEmpty()) {
+            val localSegments = localEntities.map { it.toSegment() }
+            synchronized(roadSegmentCache) {
+                for (seg in localSegments) {
+                    roadSegmentCache[seg.id] = seg
+                }
+            }
+            if (offlineMode) {
+                return@withContext localSegments
+            }
+        }
+
         // In offline mode, serve strictly from local memory/disk cache without transmitting network packets
         if (offlineMode) {
             synchronized(roadSegmentCache) {
@@ -228,7 +269,7 @@ class SpeedLimitRepository(
             }
         }
 
-        // 1. Zoom gating: if zoomed out too far, don't query to avoid massive data payloads
+        // 2. Zoom gating: if zoomed out too far, don't query to avoid massive data payloads
         if (zoomLevel < 11.5) {
             return@withContext emptyList()
         }
@@ -300,6 +341,14 @@ class SpeedLimitRepository(
                 val body = response.body?.string() ?: return@withContext emptyList()
                 val parsed = parseRoadSegmentsResponse(body, useMph)
 
+                if (parsed.isNotEmpty()) {
+                    try {
+                        offlineSpeedDao?.insertSegments(parsed.map { it.toEntity() })
+                    } catch (e: Exception) {
+                        // SQLite insertion error
+                    }
+                }
+
                 synchronized(cachedBBoxes) {
                     if (cachedBBoxes.size > 50) cachedBBoxes.removeAt(0)
                     cachedBBoxes.add(bboxKey)
@@ -329,6 +378,67 @@ class SpeedLimitRepository(
                     }
                 }
             }
+        }
+    }
+
+    suspend fun downloadAreaSpeedLimits(
+        south: Double,
+        west: Double,
+        north: Double,
+        east: Double,
+        useMph: Boolean
+    ): Int = withContext(Dispatchers.IO) {
+        val query = """[out:json][timeout:25];way["highway"]["maxspeed"]($south,$west,$north,$east);out geom;"""
+        try {
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val url = "https://overpass-api.de/api/interpreter?data=$encodedQuery"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "GPS-Speedometer-App/1.0 (+https://github.com/jakej985-rgb/GPS-speedometer; contact: jakej985@gmail.com; Android)")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext 0
+                val body = response.body?.string() ?: return@withContext 0
+                val parsed = parseRoadSegmentsResponse(body, useMph)
+                if (parsed.isNotEmpty()) {
+                    try {
+                        offlineSpeedDao?.insertSegments(parsed.map { it.toEntity() })
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                    synchronized(roadSegmentCache) {
+                        for (seg in parsed) {
+                            roadSegmentCache[seg.id] = seg
+                        }
+                    }
+                }
+                return@withContext parsed.size
+            }
+        } catch (e: Exception) {
+            return@withContext 0
+        }
+    }
+
+    suspend fun getOfflineRoadCount(): Int = withContext(Dispatchers.IO) {
+        try {
+            offlineSpeedDao?.getSegmentCount() ?: 0
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    suspend fun clearOfflineSpeedDb() = withContext(Dispatchers.IO) {
+        try {
+            offlineSpeedDao?.clearAll()
+            synchronized(roadSegmentCache) {
+                roadSegmentCache.clear()
+            }
+            synchronized(cachedBBoxes) {
+                cachedBBoxes.clear()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -374,4 +484,44 @@ data class RoadSpeedSegment(
     val speedLimitKmh: Int,
     val coordinates: List<Pair<Double, Double>>
 )
+
+fun RoadSpeedSegment.toEntity(): OfflineRoadSegmentEntity {
+    val minLat = coordinates.minOf { it.first }
+    val maxLat = coordinates.maxOf { it.first }
+    val minLng = coordinates.minOf { it.second }
+    val maxLng = coordinates.maxOf { it.second }
+    val geomStr = coordinates.joinToString(";") { "${it.first},${it.second}" }
+    return OfflineRoadSegmentEntity(
+        id = id,
+        name = name,
+        highwayType = highwayType,
+        speedLimitMph = speedLimitMph,
+        speedLimitKmh = speedLimitKmh,
+        minLat = minLat,
+        maxLat = maxLat,
+        minLng = minLng,
+        maxLng = maxLng,
+        geometrySerialized = geomStr
+    )
+}
+
+fun OfflineRoadSegmentEntity.toSegment(): RoadSpeedSegment {
+    val coords = geometrySerialized.split(";").mapNotNull { pairStr ->
+        val parts = pairStr.split(",")
+        if (parts.size == 2) {
+            val lat = parts[0].toDoubleOrNull()
+            val lng = parts[1].toDoubleOrNull()
+            if (lat != null && lng != null) lat to lng else null
+        } else null
+    }
+    return RoadSpeedSegment(
+        id = id,
+        name = name,
+        highwayType = highwayType,
+        speedLimitMph = speedLimitMph,
+        speedLimitKmh = speedLimitKmh,
+        coordinates = coords
+    )
+}
+
 

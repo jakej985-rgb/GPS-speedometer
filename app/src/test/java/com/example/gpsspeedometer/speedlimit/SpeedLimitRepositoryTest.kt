@@ -175,4 +175,149 @@ class SpeedLimitRepositoryTest {
         )
         assertTrue(segments.isEmpty())
     }
+
+    @Test
+    fun `test RoadSpeedSegment toEntity and toSegment serialization round trip`() {
+        val original = RoadSpeedSegment(
+            id = 12345L,
+            name = "Broadway",
+            highwayType = "primary",
+            speedLimitMph = 35,
+            speedLimitKmh = 56,
+            coordinates = listOf(37.77 to -122.42, 37.78 to -122.43)
+        )
+        val entity = original.toEntity()
+        assertEquals(12345L, entity.id)
+        assertEquals("Broadway", entity.name)
+        assertEquals(37.77, entity.minLat, 0.0001)
+        assertEquals(37.78, entity.maxLat, 0.0001)
+        assertEquals(-122.43, entity.minLng, 0.0001)
+        assertEquals(-122.42, entity.maxLng, 0.0001)
+
+        val restored = entity.toSegment()
+        assertEquals(original.id, restored.id)
+        assertEquals(original.name, restored.name)
+        assertEquals(original.speedLimitMph, restored.speedLimitMph)
+        assertEquals(original.speedLimitKmh, restored.speedLimitKmh)
+        assertEquals(original.coordinates.size, restored.coordinates.size)
+        assertEquals(original.coordinates[0].first, restored.coordinates[0].first, 0.0001)
+    }
+
+    @Test
+    fun `test queryIfNeeded returns local speed from OfflineSpeedDao with zero network`() = kotlinx.coroutines.runBlocking {
+        val fakeDao = FakeOfflineSpeedDao()
+        val entity = com.example.gpsspeedometer.data.OfflineRoadSegmentEntity(
+            id = 555L,
+            name = "Local Express",
+            highwayType = "trunk",
+            speedLimitMph = 55,
+            speedLimitKmh = 88,
+            minLat = 37.770,
+            maxLat = 37.780,
+            minLng = -122.425,
+            maxLng = -122.415,
+            geometrySerialized = "37.770,-122.420;37.780,-122.420"
+        )
+        fakeDao.insertSegments(listOf(entity))
+
+        val repository = SpeedLimitRepository(offlineSpeedDao = fakeDao)
+        repository.queryIfNeeded(37.775, -122.420, useMph = true, offlineMode = true)
+
+        val result = repository.speedLimitFlow.value
+        assertEquals(55, result.speedLimitMph)
+        assertEquals(88, result.speedLimitKmh)
+        assertEquals("Local Express", result.roadName)
+        assertEquals(false, result.isLoading)
+    }
+
+    @Test
+    fun `test fetchRoadSpeedSegments reads from OfflineSpeedDao in offlineMode`() = kotlinx.coroutines.runBlocking {
+        val fakeDao = FakeOfflineSpeedDao()
+        val entity = com.example.gpsspeedometer.data.OfflineRoadSegmentEntity(
+            id = 888L,
+            name = "Desert Highway",
+            highwayType = "secondary",
+            speedLimitMph = 45,
+            speedLimitKmh = 72,
+            minLat = 36.0,
+            maxLat = 36.5,
+            minLng = -115.5,
+            maxLng = -115.0,
+            geometrySerialized = "36.1,-115.2;36.2,-115.3"
+        )
+        fakeDao.insertSegments(listOf(entity))
+
+        val repository = SpeedLimitRepository(offlineSpeedDao = fakeDao)
+        val segments = repository.fetchRoadSpeedSegments(
+            south = 35.9,
+            west = -115.6,
+            north = 36.6,
+            east = -114.9,
+            zoomLevel = 15.0,
+            useMph = true,
+            offlineMode = true
+        )
+
+        assertEquals(1, segments.size)
+        assertEquals(888L, segments[0].id)
+        assertEquals("Desert Highway", segments[0].name)
+        assertEquals(45, segments[0].speedLimitMph)
+    }
+
+    @Test
+    fun `test clearOfflineSpeedDb clears Dao storage and stats`() = kotlinx.coroutines.runBlocking {
+        val fakeDao = FakeOfflineSpeedDao()
+        fakeDao.insertSegments(listOf(
+            com.example.gpsspeedometer.data.OfflineRoadSegmentEntity(
+                id = 1L, name = "A", highwayType = "residential",
+                speedLimitMph = 25, speedLimitKmh = 40,
+                minLat = 10.0, maxLat = 10.1, minLng = 20.0, maxLng = 20.1,
+                geometrySerialized = "10.0,20.0;10.1,20.1"
+            )
+        ))
+        val repository = SpeedLimitRepository(offlineSpeedDao = fakeDao)
+        assertEquals(1, repository.getOfflineRoadCount())
+
+        repository.clearOfflineSpeedDb()
+        assertEquals(0, repository.getOfflineRoadCount())
+        assertEquals(0, fakeDao.getSegmentCount())
+    }
+
+    private class FakeOfflineSpeedDao : com.example.gpsspeedometer.data.OfflineSpeedDao {
+        val storage = mutableListOf<com.example.gpsspeedometer.data.OfflineRoadSegmentEntity>()
+
+        override suspend fun insertSegments(segments: List<com.example.gpsspeedometer.data.OfflineRoadSegmentEntity>) {
+            storage.removeAll { existing -> segments.any { it.id == existing.id } }
+            storage.addAll(segments)
+        }
+
+        override suspend fun getSegmentsInBoundingBox(
+            south: Double,
+            west: Double,
+            north: Double,
+            east: Double
+        ): List<com.example.gpsspeedometer.data.OfflineRoadSegmentEntity> {
+            return storage.filter {
+                it.minLat <= north && it.maxLat >= south &&
+                it.minLng <= east && it.maxLng >= west
+            }
+        }
+
+        override suspend fun getSegmentNear(
+            lat: Double,
+            lng: Double,
+            radius: Double
+        ): com.example.gpsspeedometer.data.OfflineRoadSegmentEntity? {
+            return storage.firstOrNull {
+                it.minLat <= lat + radius && it.maxLat >= lat - radius &&
+                it.minLng <= lng + radius && it.maxLng >= lng - radius
+            }
+        }
+
+        override suspend fun getSegmentCount(): Int = storage.size
+
+        override suspend fun clearAll() {
+            storage.clear()
+        }
+    }
 }

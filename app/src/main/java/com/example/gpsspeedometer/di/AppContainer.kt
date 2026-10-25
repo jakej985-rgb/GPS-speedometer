@@ -18,7 +18,7 @@ class AppContainer(private val context: Context) {
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(context, AppDatabase::class.java, "gps_speedometer.db")
-            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -32,7 +32,7 @@ class AppContainer(private val context: Context) {
     }
 
     val speedLimitRepository: SpeedLimitRepository by lazy {
-        SpeedLimitRepository()
+        SpeedLimitRepository(offlineSpeedDao = database.offlineSpeedDao())
     }
 
     // Application scope for TripManager

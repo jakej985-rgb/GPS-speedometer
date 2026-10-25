@@ -1,5 +1,7 @@
 package com.example.gpsspeedometer.ui.map
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -27,7 +29,8 @@ class MapViewModel(
     private val speedLimitRepository: SpeedLimitRepository,
     private val settingsRepository: SettingsRepository,
     private val tripDao: TripDao,
-    private val pastTripId: Long? = null
+    private val pastTripId: Long? = null,
+    val offlineMapManager: OfflineMapManager? = null
 ) : ViewModel() {
 
     val tripState: StateFlow<TripStats> = tripManager.tripState
@@ -51,6 +54,12 @@ class MapViewModel(
     private val _roadSegments = MutableStateFlow<List<RoadSpeedSegment>>(emptyList())
     val roadSegments: StateFlow<List<RoadSpeedSegment>> = _roadSegments.asStateFlow()
 
+    private val _offlineRoadCount = MutableStateFlow(0)
+    val offlineRoadCount: StateFlow<Int> = _offlineRoadCount.asStateFlow()
+
+    private val _cacheSizeBytes = MutableStateFlow(0L)
+    val cacheSizeBytes: StateFlow<Long> = _cacheSizeBytes.asStateFlow()
+
     private var viewportJob: Job? = null
 
     init {
@@ -59,6 +68,39 @@ class MapViewModel(
                 _pastTrip.value = tripDao.getTripById(pastTripId)
                 _pastTripPoints.value = tripDao.getTripPoints(pastTripId)
             }
+        }
+        refreshOfflineStats()
+    }
+
+    fun refreshOfflineStats() {
+        viewModelScope.launch {
+            _offlineRoadCount.value = speedLimitRepository.getOfflineRoadCount()
+            _cacheSizeBytes.value = offlineMapManager?.getCacheSizeBytes() ?: 0L
+        }
+    }
+
+    suspend fun downloadSpeedLimitsForArea(south: Double, west: Double, north: Double, east: Double): Int {
+        val count = speedLimitRepository.downloadAreaSpeedLimits(
+            south, west, north, east, settings.value.useMph
+        )
+        refreshOfflineStats()
+        return count
+    }
+
+    fun clearOfflineStorage(onComplete: () -> Unit) {
+        viewModelScope.launch {
+            speedLimitRepository.clearOfflineSpeedDb()
+            offlineMapManager?.clearTileCache()
+            refreshOfflineStats()
+            onComplete()
+        }
+    }
+
+    fun importArchive(uri: Uri, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val success = offlineMapManager?.importArchive(uri) ?: false
+            refreshOfflineStats()
+            onResult(success)
         }
     }
 
@@ -98,20 +140,24 @@ class MapViewModel(
         private val speedLimitRepository: SpeedLimitRepository,
         private val settingsRepository: SettingsRepository,
         private val tripDao: TripDao,
-        private val pastTripId: Long? = null
+        private val pastTripId: Long? = null,
+        private val context: Context? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             if (modelClass.isAssignableFrom(MapViewModel::class.java)) {
+                val mapManager = context?.let { OfflineMapManager(it.applicationContext) }
                 return MapViewModel(
                     tripManager,
                     speedLimitRepository,
                     settingsRepository,
                     tripDao,
-                    pastTripId
+                    pastTripId,
+                    mapManager
                 ) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class")
         }
     }
 }
+

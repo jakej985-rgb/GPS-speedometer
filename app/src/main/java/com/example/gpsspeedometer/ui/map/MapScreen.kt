@@ -9,14 +9,34 @@ import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -24,10 +44,13 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -36,6 +59,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +67,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.launch
+import java.util.Locale
 import com.example.gpsspeedometer.speedlimit.RoadSpeedSegment
 import com.example.gpsspeedometer.ui.components.SpeedLimitSign
 import org.osmdroid.events.MapListener
@@ -70,8 +96,26 @@ fun MapScreen(
     val pastTrip by viewModel.pastTrip.collectAsState()
     val showRoadSpeedLimits by viewModel.showRoadSpeedLimits.collectAsState()
     val roadSegments by viewModel.roadSegments.collectAsState()
+    val offlineRoadCount by viewModel.offlineRoadCount.collectAsState()
+    val cacheSizeBytes by viewModel.cacheSizeBytes.collectAsState()
 
     var showLayerMenu by remember { mutableStateOf(false) }
+    var showOfflineDialog by remember { mutableStateOf(false) }
+    var isDownloadingTiles by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0) }
+    var downloadStatusText by remember { mutableStateOf("") }
+    val coroutineScope = rememberCoroutineScope()
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.importArchive(uri) { success ->
+                val msg = if (success) "Map archive imported successfully!" else "Failed to import archive."
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     val isPastTripView = pastTrip != null || pastTripPoints.isNotEmpty()
     val title = pastTrip?.name ?: if (isPastTripView) "Trip Route" else "Live Road Map"
@@ -333,6 +377,16 @@ fun MapScreen(
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
+                                text = { Text("Offline Maps & Speed DB...") },
+                                leadingIcon = { Icon(Icons.Default.Storage, contentDescription = null) },
+                                onClick = {
+                                    viewModel.refreshOfflineStats()
+                                    showOfflineDialog = true
+                                    showLayerMenu = false
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
                                 text = { Text("Source: OpenStreetMap (No Key)") },
                                 enabled = false,
                                 onClick = { }
@@ -385,6 +439,210 @@ fun MapScreen(
             )
         }
     }
+
+    if (showOfflineDialog) {
+        OfflineStorageDialog(
+            cacheSizeBytes = cacheSizeBytes,
+            offlineRoadCount = offlineRoadCount,
+            isDownloading = isDownloadingTiles,
+            downloadProgress = downloadProgress,
+            downloadStatusText = downloadStatusText,
+            onDismiss = {
+                if (!isDownloadingTiles) showOfflineDialog = false
+            },
+            onDownloadArea = {
+                val bbox = mapView.boundingBox
+                if (bbox != null && viewModel.offlineMapManager != null) {
+                    isDownloadingTiles = true
+                    downloadProgress = 0
+                    downloadStatusText = "Downloading map tiles (zooms 13–17)..."
+                    viewModel.offlineMapManager.downloadAreaTiles(
+                        mapView = mapView,
+                        bbox = bbox,
+                        minZoom = 13,
+                        maxZoom = 17,
+                        onProgress = { percent ->
+                            downloadProgress = percent
+                        },
+                        onComplete = { totalTiles ->
+                            downloadStatusText = "Saved $totalTiles tiles! Fetching speed limits..."
+                            coroutineScope.launch {
+                                try {
+                                    val count = viewModel.downloadSpeedLimitsForArea(
+                                        south = bbox.latSouth,
+                                        west = bbox.lonWest,
+                                        north = bbox.latNorth,
+                                        east = bbox.lonEast
+                                    )
+                                    Toast.makeText(
+                                        context,
+                                        "Saved $totalTiles map tiles & $count road speed limits!",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                } catch (e: Exception) {
+                                    Toast.makeText(
+                                        context,
+                                        "Saved $totalTiles tiles. Speed limit error: ${e.message}",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                } finally {
+                                    isDownloadingTiles = false
+                                    downloadStatusText = ""
+                                }
+                            }
+                        },
+                        onError = { error ->
+                            isDownloadingTiles = false
+                            downloadStatusText = ""
+                            Toast.makeText(context, "Tile download error: $error", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                } else {
+                    Toast.makeText(context, "Map view is not ready yet", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onImportArchive = {
+                filePickerLauncher.launch(arrayOf("*/*"))
+            },
+            onClearStorage = {
+                viewModel.clearOfflineStorage {
+                    Toast.makeText(context, "Offline cache cleared", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun OfflineStorageDialog(
+    cacheSizeBytes: Long,
+    offlineRoadCount: Int,
+    isDownloading: Boolean,
+    downloadProgress: Int,
+    downloadStatusText: String,
+    onDismiss: () -> Unit,
+    onDownloadArea: () -> Unit,
+    onImportArchive: () -> Unit,
+    onClearStorage: () -> Unit
+) {
+    val mbSize = remember(cacheSizeBytes) {
+        String.format(Locale.US, "%.1f MB", cacheSizeBytes / (1024f * 1024f))
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!isDownloading) onDismiss() },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Storage,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Text("Offline Maps & Speed DB")
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Storage stats card
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "Stored Offline Data",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "• Map Tile Cache: $mbSize",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = "• Speed Limits: $offlineRoadCount road segments",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+
+                if (isDownloading) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = if (downloadStatusText.isNotEmpty()) downloadStatusText else "Downloading area...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { downloadProgress / 100f },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "$downloadProgress%",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.align(Alignment.End)
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "Pre-cache map tiles (zooms 13–17) and road speed limits for the current screen view to navigate with 0 network usage.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Button(
+                        onClick = onDownloadArea,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Download Visible Area")
+                    }
+
+                    OutlinedButton(
+                        onClick = onImportArchive,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Import Pack (.sqlite / .mbtiles)")
+                    }
+
+                    OutlinedButton(
+                        onClick = onClearStorage,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Clear Offline Cache")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isDownloading
+            ) {
+                Text("Close")
+            }
+        }
+    )
 }
 
 private typealias UnitCallback = () -> Unit
