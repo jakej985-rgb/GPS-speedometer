@@ -14,10 +14,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,9 +31,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -98,6 +107,57 @@ fun GpsSpeedometerApp(appContainer: com.example.gpsspeedometer.di.AppContainer) 
         hasFine || hasCoarse
     }
     var hasPermissions by remember { mutableStateOf(initialPermissionGranted) }
+
+    var crashLog by remember {
+        val prefs = context.getSharedPreferences("crash_reporting", Context.MODE_PRIVATE)
+        mutableStateOf(prefs.getString("last_crash_trace", null))
+    }
+
+    if (crashLog != null) {
+        val clipboardManager = LocalClipboardManager.current
+        AlertDialog(
+            onDismissRequest = {
+                val prefs = context.getSharedPreferences("crash_reporting", Context.MODE_PRIVATE)
+                prefs.edit().remove("last_crash_trace").apply()
+                crashLog = null
+            },
+            title = { Text("App Crash Diagnostic Log") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        text = "The previous session encountered a crash:",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    SelectionContainer {
+                        Text(
+                            text = crashLog!!,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    clipboardManager.setText(AnnotatedString(crashLog!!))
+                    Toast.makeText(context, "Crash log copied to clipboard!", Toast.LENGTH_SHORT).show()
+                }) {
+                    Text("Copy Log")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    val prefs = context.getSharedPreferences("crash_reporting", Context.MODE_PRIVATE)
+                    prefs.edit().remove("last_crash_trace").apply()
+                    crashLog = null
+                }) {
+                    Text("Dismiss")
+                }
+            }
+        )
+    }
 
     val permissions = remember {
         val list = mutableListOf(

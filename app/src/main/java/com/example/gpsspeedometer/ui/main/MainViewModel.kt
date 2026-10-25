@@ -64,11 +64,15 @@ class MainViewModel(
         viewModelScope.launch {
             tripState.collect { state ->
                 if (state.currentLat != 0.0 && state.currentLng != 0.0) {
-                    speedLimitRepository.queryIfNeeded(
-                        lat = state.currentLat,
-                        lng = state.currentLng,
-                        useMph = settings.value.useMph
-                    )
+                    try {
+                        speedLimitRepository.queryIfNeeded(
+                            lat = state.currentLat,
+                            lng = state.currentLng,
+                            useMph = settings.value.useMph
+                        )
+                    } catch (e: Exception) {
+                        Log.e("MainViewModel", "Speed limit query exception", e)
+                    }
                 }
             }
         }

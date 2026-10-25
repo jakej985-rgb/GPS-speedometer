@@ -20,6 +20,7 @@ import com.example.gpsspeedometer.data.SettingsRepository
 import com.example.gpsspeedometer.location.LocationRepository
 import com.example.gpsspeedometer.logic.TripManager
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -50,6 +51,7 @@ class TrackingService : LifecycleService() {
         settingsRepository.settingsFlow
             .map { it.sampleIntervalMs }
             .distinctUntilChanged()
+            .catch { e -> Log.e("TrackingService", "Error in settings flow", e) }
             .onEach { rate ->
                 currentSampleRate = rate
                 if (locationJob?.isActive == true) {
@@ -148,8 +150,15 @@ class TrackingService : LifecycleService() {
         if (locationJob?.isActive == true) return
 
         locationJob = locationRepository.getLocationUpdates(currentSampleRate)
+            .catch { e ->
+                Log.e("TrackingService", "Error in location updates flow", e)
+            }
             .onEach { location ->
-                tripManager.processLocation(location)
+                try {
+                    tripManager.processLocation(location)
+                } catch (e: Exception) {
+                    Log.e("TrackingService", "Error processing location in service", e)
+                }
             }
             .launchIn(lifecycleScope)
     }
@@ -163,7 +172,11 @@ class TrackingService : LifecycleService() {
         statsJob?.cancel()
         statsJob = tripManager.tripState
             .onEach { stats ->
-                updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs, stats.isPaused)
+                try {
+                    updateNotification(stats.currentSpeedMph, stats.distanceMeters, stats.elapsedMs, stats.isPaused)
+                } catch (e: Exception) {
+                    Log.e("TrackingService", "Error updating notification from stats", e)
+                }
             }
             .launchIn(lifecycleScope)
     }
@@ -219,7 +232,7 @@ class TrackingService : LifecycleService() {
                 Intent(this, TrackingService::class.java).apply { action = ACTION_RESUME },
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
-            builder.addAction(R.drawable.ic_play, "Resume", resumeIntent)
+            builder.addAction(0, "Resume", resumeIntent)
         } else {
             val pauseIntent = PendingIntent.getService(
                 this,
@@ -227,7 +240,7 @@ class TrackingService : LifecycleService() {
                 Intent(this, TrackingService::class.java).apply { action = ACTION_PAUSE },
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
-            builder.addAction(R.drawable.ic_pause, "Pause", pauseIntent)
+            builder.addAction(0, "Pause", pauseIntent)
         }
 
         val stopIntent = PendingIntent.getService(
@@ -236,7 +249,7 @@ class TrackingService : LifecycleService() {
             Intent(this, TrackingService::class.java).apply { action = ACTION_STOP },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        builder.addAction(R.drawable.ic_stop, "Stop", stopIntent)
+        builder.addAction(0, "Stop", stopIntent)
 
         return builder.build()
     }

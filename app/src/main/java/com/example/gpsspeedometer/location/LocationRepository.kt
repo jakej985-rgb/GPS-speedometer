@@ -54,13 +54,22 @@ class LocationRepository(private val context: Context) {
 
                         val callback = object : LocationCallback() {
                             override fun onLocationResult(result: LocationResult) {
-                                result.locations.forEach { location ->
-                                    trySend(location.toLocationSample())
+                                try {
+                                    result.locations.forEach { location ->
+                                        if (location != null) {
+                                            trySend(location.toLocationSample())
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e("LocationRepository", "Error in onLocationResult", e)
                                 }
                             }
                         }
                         fusedCallback = callback
                         client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+                            .addOnFailureListener { e ->
+                                Log.e("LocationRepository", "FusedLocationProviderClient async failure", e)
+                            }
                         isFusedRegistered = true
                         Log.d("LocationRepository", "Using FusedLocationProviderClient for updates")
                     } catch (e: Exception) {
@@ -73,7 +82,11 @@ class LocationRepository(private val context: Context) {
                     try {
                         val listener = object : LocationListener {
                             override fun onLocationChanged(location: Location) {
-                                trySend(location.toLocationSample())
+                                try {
+                                    trySend(location.toLocationSample())
+                                } catch (e: Exception) {
+                                    Log.e("LocationRepository", "Error in onLocationChanged", e)
+                                }
                             }
                             @Deprecated("Deprecated in Java")
                             override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}

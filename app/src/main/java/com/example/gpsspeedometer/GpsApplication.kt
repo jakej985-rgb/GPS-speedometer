@@ -1,6 +1,7 @@
 package com.example.gpsspeedometer
 
 import android.app.Application
+import android.content.Context
 import android.util.Log
 import com.example.gpsspeedometer.di.AppContainer
 
@@ -12,7 +13,18 @@ class GpsApplication : Application() {
 
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            Log.e("FATAL_APP_CRASH", "Fatal uncaught exception on thread ${thread.name}", throwable)
+            try {
+                val stackTrace = Log.getStackTraceString(throwable)
+                val crashReport = "Thread: ${thread.name}\n" +
+                        "Exception: ${throwable.javaClass.name}\n" +
+                        "Message: ${throwable.message}\n\n" +
+                        "Stack Trace:\n$stackTrace"
+                Log.e("FATAL_APP_CRASH", crashReport)
+                val prefs = getSharedPreferences("crash_reporting", Context.MODE_PRIVATE)
+                prefs.edit().putString("last_crash_trace", crashReport).commit()
+            } catch (e: Exception) {
+                Log.e("FATAL_APP_CRASH", "Error persisting crash report", e)
+            }
             previousHandler?.uncaughtException(thread, throwable)
         }
 
