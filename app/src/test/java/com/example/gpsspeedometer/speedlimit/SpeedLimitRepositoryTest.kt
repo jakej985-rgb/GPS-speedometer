@@ -94,4 +94,60 @@ class SpeedLimitRepositoryTest {
         val key2 = SpeedLimitRepository.getCacheKey(37.774940, -122.419420)
         assertEquals(key1, key2)
     }
+
+    @Test
+    fun `test parseRoadSegmentsResponse parses ways with coordinates and speed limits`() {
+        val repository = SpeedLimitRepository()
+        val mockJson = """
+            {
+                "version": 0.6,
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 998877,
+                        "tags": {
+                            "highway": "motorway",
+                            "name": "Interstate 15",
+                            "maxspeed": "65 mph"
+                        },
+                        "geometry": [
+                            {"lat": 47.500, "lon": -111.300},
+                            {"lat": 47.505, "lon": -111.305}
+                        ]
+                    },
+                    {
+                        "type": "way",
+                        "id": 112233,
+                        "tags": {
+                            "highway": "residential",
+                            "name": "2nd Avenue",
+                            "maxspeed": "25"
+                        },
+                        "geometry": [
+                            {"lat": 47.510, "lon": -111.310},
+                            {"lat": 47.512, "lon": -111.312}
+                        ]
+                    }
+                ]
+            }
+        """.trimIndent()
+
+        val segments = repository.parseRoadSegmentsResponse(mockJson, useMph = true)
+        assertEquals(2, segments.size)
+
+        val seg1 = segments[0]
+        assertEquals(998877L, seg1.id)
+        assertEquals("Interstate 15", seg1.name)
+        assertEquals("motorway", seg1.highwayType)
+        assertEquals(65, seg1.speedLimitMph)
+        assertEquals(105, seg1.speedLimitKmh)
+        assertEquals(2, seg1.coordinates.size)
+
+        val seg2 = segments[1]
+        assertEquals(112233L, seg2.id)
+        assertEquals("2nd Avenue", seg2.name)
+        assertEquals("residential", seg2.highwayType)
+        assertEquals(25, seg2.speedLimitMph)
+        assertEquals(40, seg2.speedLimitKmh)
+    }
 }

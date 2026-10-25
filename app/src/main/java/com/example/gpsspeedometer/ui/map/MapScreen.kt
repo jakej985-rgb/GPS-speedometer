@@ -1,13 +1,27 @@
 package com.example.gpsspeedometer.ui.map
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import android.widget.Toast
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -19,22 +33,25 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.gpsspeedometer.speedlimit.RoadSpeedSegment
 import com.example.gpsspeedometer.ui.components.SpeedLimitSign
-import androidx.compose.material.icons.filled.Layers
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import android.widget.Toast
+import org.osmdroid.events.MapListener
+import org.osmdroid.events.ScrollEvent
+import org.osmdroid.events.ZoomEvent
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.CopyrightOverlay
+import org.osmdroid.views.overlay.FolderOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 
@@ -42,7 +59,7 @@ import org.osmdroid.views.overlay.Polyline
 @Composable
 fun MapScreen(
     viewModel: MapViewModel,
-    onBack: () -> Unit
+    onBack: UnitCallback
 ) {
     val context = LocalContext.current
     val tripState by viewModel.tripState.collectAsState()
@@ -50,11 +67,17 @@ fun MapScreen(
     val settings by viewModel.settings.collectAsState()
     val pastTripPoints by viewModel.pastTripPoints.collectAsState()
     val pastTrip by viewModel.pastTrip.collectAsState()
+    val showRoadSpeedLimits by viewModel.showRoadSpeedLimits.collectAsState()
+    val roadSegments by viewModel.roadSegments.collectAsState()
 
     var useCartoLayer by remember { mutableStateOf(false) }
+    var showLayerMenu by remember { mutableStateOf(false) }
 
     val isPastTripView = pastTrip != null || pastTripPoints.isNotEmpty()
     val title = pastTrip?.name ?: if (isPastTripView) "Trip Route" else "Live Road Map"
+
+    val roadSpeedOverlay = remember { FolderOverlay() }
+    val userMarkerRef = remember { mutableStateOf<Marker?>(null) }
 
     val mapView = remember {
         MapView(context).apply {
@@ -68,12 +91,41 @@ fun MapScreen(
                 setTextSize(10)
             }
             overlays.add(copyrightOverlay)
+            overlays.add(roadSpeedOverlay)
         }
     }
 
     DisposableEffect(mapView) {
+        val mapListener = object : MapListener {
+            override fun onScroll(event: ScrollEvent?): Boolean {
+                val bbox = mapView.boundingBox
+                viewModel.onViewportChanged(
+                    bbox.latSouth,
+                    bbox.lonWest,
+                    bbox.latNorth,
+                    bbox.lonEast,
+                    mapView.zoomLevelDouble
+                )
+                return false
+            }
+
+            override fun onZoom(event: ZoomEvent?): Boolean {
+                val bbox = mapView.boundingBox
+                viewModel.onViewportChanged(
+                    bbox.latSouth,
+                    bbox.lonWest,
+                    bbox.latNorth,
+                    bbox.lonEast,
+                    mapView.zoomLevelDouble
+                )
+                return false
+            }
+        }
+        mapView.addMapListener(mapListener)
         mapView.onResume()
+
         onDispose {
+            mapView.removeMapListener(mapListener)
             mapView.onPause()
             mapView.onDetach()
         }
@@ -81,10 +133,53 @@ fun MapScreen(
 
     val primaryColorArgb = MaterialTheme.colorScheme.primary.toArgb()
 
+    // Render road speed limits
+    LaunchedEffect(roadSegments, showRoadSpeedLimits, settings.useMph) {
+        roadSpeedOverlay.items.clear()
+        if (showRoadSpeedLimits && roadSegments.isNotEmpty()) {
+            for (segment in roadSegments) {
+                val geoPoints = segment.coordinates.map { GeoPoint(it.first, it.second) }
+                val speedMph = segment.speedLimitMph
+
+                // Color-code road line by speed range
+                val roadColor = when {
+                    speedMph <= 25 -> 0xFF2E7D32.toInt() // Emerald green (neighborhood/slow)
+                    speedMph <= 45 -> 0xFF1976D2.toInt() // Blue (arterials)
+                    speedMph <= 65 -> 0xFFF57C00.toInt() // Orange (highways)
+                    else -> 0xFFD32F2F.toInt()           // Red (fast expressway/interstate)
+                }
+
+                val polyline = Polyline().apply {
+                    setPoints(geoPoints)
+                    outlinePaint.color = roadColor
+                    outlinePaint.strokeWidth = 8f
+                    outlinePaint.alpha = 180
+                }
+                roadSpeedOverlay.add(polyline)
+
+                // Place a speed shield at the midpoint of each segment
+                if (geoPoints.size >= 2) {
+                    val midPoint = geoPoints[geoPoints.size / 2]
+                    val speedDisplay = if (settings.useMph) "$speedMph" else "${segment.speedLimitKmh}"
+                    val badgeIcon = createSpeedBadgeDrawable(context, speedDisplay, settings.useMph)
+
+                    val badgeMarker = Marker(mapView).apply {
+                        position = midPoint
+                        icon = badgeIcon
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                        setTitle("${segment.name ?: "Road"}: $speedDisplay ${if (settings.useMph) "MPH" else "KM/H"}")
+                    }
+                    roadSpeedOverlay.add(badgeMarker)
+                }
+            }
+        }
+        mapView.invalidate()
+    }
+
     // Handle past trip points polyline and camera fitting
     LaunchedEffect(pastTripPoints) {
         if (pastTripPoints.isNotEmpty()) {
-            mapView.overlays.clear()
+            mapView.overlays.removeAll { it is Polyline && it != roadSpeedOverlay }
 
             val geoPoints = pastTripPoints.map { GeoPoint(it.lat, it.lng) }
             val polyline = Polyline().apply {
@@ -92,7 +187,7 @@ fun MapScreen(
                 outlinePaint.color = primaryColorArgb
                 outlinePaint.strokeWidth = 10f
             }
-            mapView.overlays.add(polyline)
+            mapView.overlays.add(0, polyline)
 
             // Start marker
             val startPoint = geoPoints.first()
@@ -155,10 +250,8 @@ fun MapScreen(
                 mapView.overlays.remove(livePolyline)
             }
 
-            // Remove previous user marker and add updated marker
-            val existingMarkers = mapView.overlays.filterIsInstance<Marker>()
-            mapView.overlays.removeAll(existingMarkers)
-
+            // Update user marker
+            userMarkerRef.value?.let { mapView.overlays.remove(it) }
             val userMarker = Marker(mapView).apply {
                 position = userGeoPoint
                 setTitle("Current Location")
@@ -167,6 +260,7 @@ fun MapScreen(
                     rotation = tripState.bearing
                 }
             }
+            userMarkerRef.value = userMarker
             mapView.overlays.add(userMarker)
 
             mapView.controller.animateTo(userGeoPoint)
@@ -184,17 +278,52 @@ fun MapScreen(
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = {
-                            useCartoLayer = !useCartoLayer
-                            val newSource = if (useCartoLayer) AppTileSources.CartoVoyager else AppTileSources.OpenStreetMap
-                            mapView.setTileSource(newSource)
-                            mapView.invalidate()
-                            val name = if (useCartoLayer) "Carto Voyager" else "OpenStreetMap"
-                            Toast.makeText(context, "Map layer: $name", Toast.LENGTH_SHORT).show()
+                    Box {
+                        IconButton(onClick = { showLayerMenu = true }) {
+                            Icon(Icons.Default.Layers, contentDescription = "Map Layers")
                         }
-                    ) {
-                        Icon(Icons.Default.Layers, contentDescription = "Toggle Map Layer")
+                        DropdownMenu(
+                            expanded = showLayerMenu,
+                            onDismissRequest = { showLayerMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("OpenStreetMap Standard") },
+                                trailingIcon = if (!useCartoLayer) {
+                                    { Icon(Icons.Default.Check, contentDescription = null) }
+                                } else null,
+                                onClick = {
+                                    useCartoLayer = false
+                                    mapView.setTileSource(AppTileSources.OpenStreetMap)
+                                    mapView.invalidate()
+                                    showLayerMenu = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Carto Voyager") },
+                                trailingIcon = if (useCartoLayer) {
+                                    { Icon(Icons.Default.Check, contentDescription = null) }
+                                } else null,
+                                onClick = {
+                                    useCartoLayer = true
+                                    mapView.setTileSource(AppTileSources.CartoVoyager)
+                                    mapView.invalidate()
+                                    showLayerMenu = false
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Road Speed Limits: ${if (showRoadSpeedLimits) "ON" else "OFF"}") },
+                                trailingIcon = if (showRoadSpeedLimits) {
+                                    { Icon(Icons.Default.Check, contentDescription = null) }
+                                } else null,
+                                onClick = {
+                                    viewModel.toggleRoadSpeedLimits(!showRoadSpeedLimits)
+                                    showLayerMenu = false
+                                    val status = if (!showRoadSpeedLimits) "enabled" else "disabled"
+                                    Toast.makeText(context, "Road speed limits $status", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        }
                     }
                 }
             )
@@ -242,4 +371,50 @@ fun MapScreen(
             )
         }
     }
+}
+
+private typealias UnitCallback = () -> Unit
+
+/**
+ * Creates a speed badge drawable to display posted road speed limits on the map.
+ * US style: crisp rounded rectangle with black border.
+ * EU style: circle with red border.
+ */
+fun createSpeedBadgeDrawable(context: Context, speedText: String, useMph: Boolean): Drawable {
+    val density = context.resources.displayMetrics.density
+    val width = (32 * density).toInt()
+    val height = (32 * density).toInt()
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = Paint.Style.FILL
+    }
+    val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = if (useMph) android.graphics.Color.BLACK else android.graphics.Color.parseColor("#D32F2F")
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f * density
+    }
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.BLACK
+        textSize = 14f * density
+        typeface = Typeface.DEFAULT_BOLD
+        textAlign = Paint.Align.CENTER
+    }
+
+    if (useMph) {
+        val rect = RectF(2f * density, 2f * density, width - 2f * density, height - 2f * density)
+        canvas.drawRoundRect(rect, 5f * density, 5f * density, bgPaint)
+        canvas.drawRoundRect(rect, 5f * density, 5f * density, borderPaint)
+    } else {
+        val radius = (width / 2f) - (2f * density)
+        canvas.drawCircle(width / 2f, height / 2f, radius, bgPaint)
+        canvas.drawCircle(width / 2f, height / 2f, radius, borderPaint)
+    }
+
+    val yPos = (height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
+    canvas.drawText(speedText, width / 2f, yPos, textPaint)
+
+    return BitmapDrawable(context.resources, bitmap)
 }

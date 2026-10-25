@@ -11,7 +11,10 @@ import com.example.gpsspeedometer.data.TripPointEntity
 import com.example.gpsspeedometer.domain.SpeedLimitInfo
 import com.example.gpsspeedometer.domain.TripStats
 import com.example.gpsspeedometer.logic.TripManager
+import com.example.gpsspeedometer.speedlimit.RoadSpeedSegment
 import com.example.gpsspeedometer.speedlimit.SpeedLimitRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -42,12 +45,44 @@ class MapViewModel(
     private val _pastTrip = MutableStateFlow<TripEntity?>(null)
     val pastTrip: StateFlow<TripEntity?> = _pastTrip.asStateFlow()
 
+    private val _showRoadSpeedLimits = MutableStateFlow(true)
+    val showRoadSpeedLimits: StateFlow<Boolean> = _showRoadSpeedLimits.asStateFlow()
+
+    private val _roadSegments = MutableStateFlow<List<RoadSpeedSegment>>(emptyList())
+    val roadSegments: StateFlow<List<RoadSpeedSegment>> = _roadSegments.asStateFlow()
+
+    private var viewportJob: Job? = null
+
     init {
         if (pastTripId != null && pastTripId > 0L) {
             viewModelScope.launch {
                 _pastTrip.value = tripDao.getTripById(pastTripId)
                 _pastTripPoints.value = tripDao.getTripPoints(pastTripId)
             }
+        }
+    }
+
+    fun toggleRoadSpeedLimits(enabled: Boolean) {
+        _showRoadSpeedLimits.value = enabled
+        if (!enabled) {
+            _roadSegments.value = emptyList()
+        }
+    }
+
+    fun onViewportChanged(south: Double, west: Double, north: Double, east: Double, zoomLevel: Double) {
+        if (!_showRoadSpeedLimits.value) return
+        viewportJob?.cancel()
+        viewportJob = viewModelScope.launch {
+            delay(700L) // Debounce panning/zooming
+            val segments = speedLimitRepository.fetchRoadSpeedSegments(
+                south = south,
+                west = west,
+                north = north,
+                east = east,
+                zoomLevel = zoomLevel,
+                useMph = settings.value.useMph
+            )
+            _roadSegments.value = segments
         }
     }
 
