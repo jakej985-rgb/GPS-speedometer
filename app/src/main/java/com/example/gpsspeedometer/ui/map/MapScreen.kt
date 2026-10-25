@@ -85,7 +85,7 @@ fun MapScreen(
             val startPoint = geoPoints.first()
             val startMarker = Marker(mapView).apply {
                 position = startPoint
-                title = "Start"
+                setTitle("Start")
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             }
             mapView.overlays.add(startMarker)
@@ -94,7 +94,7 @@ fun MapScreen(
             val endPoint = geoPoints.last()
             val endMarker = Marker(mapView).apply {
                 position = endPoint
-                title = "End"
+                setTitle("End")
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             }
             mapView.overlays.add(endMarker)
@@ -127,7 +127,7 @@ fun MapScreen(
 
             val userMarker = Marker(mapView).apply {
                 position = userGeoPoint
-                title = "Current Location"
+                setTitle("Current Location")
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
             }
             mapView.overlays.add(userMarker)

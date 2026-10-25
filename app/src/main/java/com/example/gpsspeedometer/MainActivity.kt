@@ -32,11 +32,11 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
+import android.content.Context
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import androidx.preference.PreferenceManager
 import com.example.gpsspeedometer.ui.main.MainViewModel
 import com.example.gpsspeedometer.ui.main.SpeedometerScreen
 import com.example.gpsspeedometer.ui.map.MapScreen
@@ -53,7 +53,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         // Initialize osmdroid configuration
-        val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+        val prefs = applicationContext.getSharedPreferences("${packageName}_osm", Context.MODE_PRIVATE)
         Configuration.getInstance().load(applicationContext, prefs)
         Configuration.getInstance().userAgentValue = packageName
 
