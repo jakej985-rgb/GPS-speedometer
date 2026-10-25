@@ -39,7 +39,21 @@ class SpeedLimitRepository(
     private val cachedBBoxes = mutableListOf<String>()
     private var lastRoadQueryTimestamp: Long = 0L
 
-    suspend fun queryIfNeeded(lat: Double, lng: Double, useMph: Boolean = true) {
+    suspend fun queryIfNeeded(lat: Double, lng: Double, useMph: Boolean = true, offlineMode: Boolean = false) {
+        val cacheKey = getCacheKey(lat, lng)
+        synchronized(cache) {
+            val cached = cache[cacheKey]
+            if (cached != null) {
+                _speedLimitFlow.value = cached
+                return
+            }
+        }
+
+        // If in offline mode, do not transmit any network packets
+        if (offlineMode) {
+            return
+        }
+
         val now = System.currentTimeMillis()
 
         // 1. Enforce minimum 15-second throttle between network calls to prevent Overpass 429 rate-limiting
@@ -59,7 +73,6 @@ class SpeedLimitRepository(
             }
         }
 
-        val cacheKey = getCacheKey(lat, lng)
         synchronized(cache) {
             val cached = cache[cacheKey]
             if (cached != null) {
@@ -201,8 +214,20 @@ class SpeedLimitRepository(
         north: Double,
         east: Double,
         zoomLevel: Double,
-        useMph: Boolean
+        useMph: Boolean,
+        offlineMode: Boolean = false
     ): List<RoadSpeedSegment> = withContext(Dispatchers.IO) {
+        // In offline mode, serve strictly from local memory/disk cache without transmitting network packets
+        if (offlineMode) {
+            synchronized(roadSegmentCache) {
+                return@withContext roadSegmentCache.values.filter { seg ->
+                    seg.coordinates.any { (lat, lng) ->
+                        lat in south..north && lng in west..east
+                    }
+                }
+            }
+        }
+
         // 1. Zoom gating: if zoomed out too far, don't query to avoid massive data payloads
         if (zoomLevel < 11.5) {
             return@withContext emptyList()

@@ -17,7 +17,8 @@ data class AppSettings(
     val maxDeltaSec: Float = 10f,
     val useMph: Boolean = true,
     val speedAlertLimit: Float = 80f,
-    val keepScreenOn: Boolean = true
+    val keepScreenOn: Boolean = true,
+    val offlineMode: Boolean = false
 )
 
 class SettingsRepository(private val dataStore: DataStore<Preferences>) {
@@ -35,6 +36,7 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val USE_MPH = booleanPreferencesKey("use_mph")
         val SPEED_ALERT_LIMIT = floatPreferencesKey("speed_alert_limit")
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
+        val OFFLINE_MODE = booleanPreferencesKey("offline_mode")
     }
 
     val settingsFlow: Flow<AppSettings> = dataStore.data
@@ -51,7 +53,8 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
                 maxDeltaSec = preferences[PreferencesKeys.MAX_DELTA_SEC] ?: 10f,
                 useMph = preferences[PreferencesKeys.USE_MPH] ?: true,
                 speedAlertLimit = preferences[PreferencesKeys.SPEED_ALERT_LIMIT] ?: 80f,
-                keepScreenOn = preferences[PreferencesKeys.KEEP_SCREEN_ON] ?: true
+                keepScreenOn = preferences[PreferencesKeys.KEEP_SCREEN_ON] ?: true,
+                offlineMode = preferences[PreferencesKeys.OFFLINE_MODE] ?: false
             )
         }
 
@@ -101,6 +104,10 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun updateKeepScreenOn(enabled: Boolean) {
         dataStore.edit { it[PreferencesKeys.KEEP_SCREEN_ON] = enabled }
+    }
+
+    suspend fun updateOfflineMode(enabled: Boolean) {
+        dataStore.edit { it[PreferencesKeys.OFFLINE_MODE] = enabled }
     }
 
     suspend fun resetToDefaults() {

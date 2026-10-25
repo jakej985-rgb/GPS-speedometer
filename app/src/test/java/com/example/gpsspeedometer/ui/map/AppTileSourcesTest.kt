@@ -21,13 +21,6 @@ class AppTileSourcesTest {
     }
 
     @Test
-    fun cartoVoyager_configuredProperly() {
-        assertEquals("CartoVoyager", AppTileSources.CartoVoyager.name())
-        assertFalse(AppTileSources.CartoVoyager.tileSourcePolicy.normalizesUserAgent())
-        assertTrue(AppTileSources.CartoVoyager.tileSourcePolicy.acceptsUserAgent(AppTileSources.USER_AGENT))
-    }
-
-    @Test
     fun userAgent_isCompliantWithOsmPolicy() {
         assertTrue(AppTileSources.USER_AGENT.startsWith("GPS-Speedometer-App/"))
         assertTrue(AppTileSources.USER_AGENT.contains("github.com"))

@@ -3,6 +3,7 @@ package com.example.gpsspeedometer.speedlimit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SpeedLimitRepositoryTest {
@@ -149,5 +150,29 @@ class SpeedLimitRepositoryTest {
         assertEquals("residential", seg2.highwayType)
         assertEquals(25, seg2.speedLimitMph)
         assertEquals(40, seg2.speedLimitKmh)
+    }
+
+    @Test
+    fun `test queryIfNeeded with offlineMode avoids network calls`() = kotlinx.coroutines.runBlocking {
+        val repository = SpeedLimitRepository()
+        // Querying with offlineMode = true must complete without throwing network error
+        repository.queryIfNeeded(37.7749, -122.4194, useMph = true, offlineMode = true)
+        assertEquals(false, repository.speedLimitFlow.value.isLoading)
+        assertNull(repository.speedLimitFlow.value.speedLimitMph)
+    }
+
+    @Test
+    fun `test fetchRoadSpeedSegments with offlineMode returns empty without network`() = kotlinx.coroutines.runBlocking {
+        val repository = SpeedLimitRepository()
+        val segments = repository.fetchRoadSpeedSegments(
+            south = 37.0,
+            west = -122.0,
+            north = 38.0,
+            east = -121.0,
+            zoomLevel = 15.0,
+            useMph = true,
+            offlineMode = true
+        )
+        assertTrue(segments.isEmpty())
     }
 }

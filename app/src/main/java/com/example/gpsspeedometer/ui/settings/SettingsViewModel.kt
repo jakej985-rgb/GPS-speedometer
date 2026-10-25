@@ -62,6 +62,10 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
         viewModelScope.launch { repository.updateKeepScreenOn(enabled) }
     }
 
+    fun updateOfflineMode(enabled: Boolean) {
+        viewModelScope.launch { repository.updateOfflineMode(enabled) }
+    }
+
     fun resetToDefaults() {
         viewModelScope.launch { repository.resetToDefaults() }
     }

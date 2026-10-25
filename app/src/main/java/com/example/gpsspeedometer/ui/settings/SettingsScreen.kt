@@ -200,6 +200,15 @@ fun SettingsScreen(
                         steps = 8,
                         onValueChangeFinished = { viewModel.updateSampleInterval(it.toLong()) }
                     )
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                    SettingSwitchRow(
+                        title = "Offline Mode (Zero Network)",
+                        subtitle = "Air-gap the app: blocks all outgoing internet requests (0 bytes). Uses local GPS hardware and cached map tiles only.",
+                        checked = settings.offlineMode,
+                        onCheckedChange = { viewModel.updateOfflineMode(it) }
+                    )
                 }
             }
 

@@ -37,31 +37,6 @@ object AppTileSources {
     ) {}
 
     /**
-     * CartoDB Voyager raster tiles powered by OpenStreetMap data.
-     * Provides high-contrast, beautiful navigation styling with reliable CDN delivery.
-     */
-    val CartoVoyager: OnlineTileSourceBase = object : XYTileSource(
-        "CartoVoyager",
-        0,
-        19,
-        256,
-        ".png",
-        arrayOf(
-            "https://a.basemaps.cartocdn.com/rastertiles/voyager/",
-            "https://b.basemaps.cartocdn.com/rastertiles/voyager/",
-            "https://c.basemaps.cartocdn.com/rastertiles/voyager/",
-            "https://d.basemaps.cartocdn.com/rastertiles/voyager/"
-        ),
-        "© OpenStreetMap contributors © CARTO",
-        TileSourcePolicy(
-            4,
-            TileSourcePolicy.FLAG_NO_BULK or
-            TileSourcePolicy.FLAG_NO_PREVENTIVE or
-            TileSourcePolicy.FLAG_USER_AGENT_MEANINGFUL
-        )
-    ) {}
-
-    /**
      * Configure osmdroid globally to guarantee compliance with tile usage policies,
      * eliminate blocked 403 cached error tiles, and ensure compliant User-Agent headers.
      */

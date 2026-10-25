@@ -68,7 +68,8 @@ class MainViewModel(
                         speedLimitRepository.queryIfNeeded(
                             lat = state.currentLat,
                             lng = state.currentLng,
-                            useMph = settings.value.useMph
+                            useMph = settings.value.useMph,
+                            offlineMode = settings.value.offlineMode
                         )
                     } catch (e: Exception) {
                         Log.e("MainViewModel", "Speed limit query exception", e)

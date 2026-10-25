@@ -26,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -70,7 +71,6 @@ fun MapScreen(
     val showRoadSpeedLimits by viewModel.showRoadSpeedLimits.collectAsState()
     val roadSegments by viewModel.roadSegments.collectAsState()
 
-    var useCartoLayer by remember { mutableStateOf(false) }
     var showLayerMenu by remember { mutableStateOf(false) }
 
     val isPastTripView = pastTrip != null || pastTripPoints.isNotEmpty()
@@ -93,6 +93,11 @@ fun MapScreen(
             overlays.add(copyrightOverlay)
             overlays.add(roadSpeedOverlay)
         }
+    }
+
+    // Apply offline mode to map tile downloader (blocks 100% of outgoing network requests when true)
+    LaunchedEffect(settings.offlineMode) {
+        mapView.setUseDataConnection(!settings.offlineMode)
     }
 
     DisposableEffect(mapView) {
@@ -278,6 +283,20 @@ fun MapScreen(
                     }
                 },
                 actions = {
+                    if (settings.offlineMode) {
+                        Surface(
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            modifier = Modifier.padding(end = 4.dp)
+                        ) {
+                            Text(
+                                text = "Offline (0 Net)",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                    }
                     Box {
                         IconButton(onClick = { showLayerMenu = true }) {
                             Icon(Icons.Default.Layers, contentDescription = "Map Layers")
@@ -286,31 +305,6 @@ fun MapScreen(
                             expanded = showLayerMenu,
                             onDismissRequest = { showLayerMenu = false }
                         ) {
-                            DropdownMenuItem(
-                                text = { Text("OpenStreetMap Standard") },
-                                trailingIcon = if (!useCartoLayer) {
-                                    { Icon(Icons.Default.Check, contentDescription = null) }
-                                } else null,
-                                onClick = {
-                                    useCartoLayer = false
-                                    mapView.setTileSource(AppTileSources.OpenStreetMap)
-                                    mapView.invalidate()
-                                    showLayerMenu = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Carto Voyager") },
-                                trailingIcon = if (useCartoLayer) {
-                                    { Icon(Icons.Default.Check, contentDescription = null) }
-                                } else null,
-                                onClick = {
-                                    useCartoLayer = true
-                                    mapView.setTileSource(AppTileSources.CartoVoyager)
-                                    mapView.invalidate()
-                                    showLayerMenu = false
-                                }
-                            )
-                            HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text("Road Speed Limits: ${if (showRoadSpeedLimits) "ON" else "OFF"}") },
                                 trailingIcon = if (showRoadSpeedLimits) {
@@ -322,6 +316,26 @@ fun MapScreen(
                                     val status = if (!showRoadSpeedLimits) "enabled" else "disabled"
                                     Toast.makeText(context, "Road speed limits $status", Toast.LENGTH_SHORT).show()
                                 }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Offline Mode: ${if (settings.offlineMode) "ON (0 Net)" else "OFF"}") },
+                                trailingIcon = if (settings.offlineMode) {
+                                    { Icon(Icons.Default.Check, contentDescription = null) }
+                                } else null,
+                                onClick = {
+                                    val newMode = !settings.offlineMode
+                                    viewModel.toggleOfflineMode(newMode)
+                                    showLayerMenu = false
+                                    val msg = if (newMode) "Offline Mode: 0 network bytes" else "Online Mode: network enabled"
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Source: OpenStreetMap (No Key)") },
+                                enabled = false,
+                                onClick = { }
                             )
                         }
                     }

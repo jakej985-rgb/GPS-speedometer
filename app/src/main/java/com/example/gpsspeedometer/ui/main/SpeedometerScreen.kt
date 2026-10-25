@@ -107,15 +107,28 @@ fun SpeedometerScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Status Chip
-                SuggestionChip(
-                    onClick = { },
-                    label = { Text(status, color = statusColor) },
-                    colors = SuggestionChipDefaults.suggestionChipColors(
-                        labelColor = statusColor
-                    ),
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SuggestionChip(
+                        onClick = { },
+                        label = { Text(status, color = statusColor) },
+                        colors = SuggestionChipDefaults.suggestionChipColors(
+                            labelColor = statusColor
+                        ),
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    if (settings.offlineMode) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        SuggestionChip(
+                            onClick = { },
+                            label = { Text("Offline", color = MaterialTheme.colorScheme.tertiary) },
+                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                labelColor = MaterialTheme.colorScheme.tertiary
+                            ),
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                    }
+                }
 
                 Row {
                     IconButton(onClick = onNavigateToMap) {

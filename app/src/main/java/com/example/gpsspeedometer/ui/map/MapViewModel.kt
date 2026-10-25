@@ -69,6 +69,12 @@ class MapViewModel(
         }
     }
 
+    fun toggleOfflineMode(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateOfflineMode(enabled)
+        }
+    }
+
     fun onViewportChanged(south: Double, west: Double, north: Double, east: Double, zoomLevel: Double) {
         if (!_showRoadSpeedLimits.value) return
         viewportJob?.cancel()
@@ -80,7 +86,8 @@ class MapViewModel(
                 north = north,
                 east = east,
                 zoomLevel = zoomLevel,
-                useMph = settings.value.useMph
+                useMph = settings.value.useMph,
+                offlineMode = settings.value.offlineMode
             )
             _roadSegments.value = segments
         }
