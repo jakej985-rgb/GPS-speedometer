@@ -597,84 +597,119 @@ class SpeedLimitRepository(
             }
         }
 
-        // Throttle road network calls: minimum 4s between road batch requests
+        // Throttle road network calls: minimum 2.5s between road batch requests
         val now = System.currentTimeMillis()
-        if (now - lastRoadQueryTimestamp < 4000L) {
+        if (now - lastRoadQueryTimestamp < 2500L) {
             synchronized(roadSegmentCache) {
-                return@withContext roadSegmentCache.values.filter { seg ->
+                val cached = roadSegmentCache.values.filter { seg ->
                     seg.coordinates.any { (lat, lng) ->
                         lat in south..north && lng in west..east
                     }
                 }
+                if (cached.isNotEmpty()) return@withContext cached
             }
         }
 
-        val highwayFilter = when {
-            zoomLevel < 14.0 -> """["highway"~"^(motorway|trunk|primary|motorway_link|trunk_link|primary_link)$"]"""
-            zoomLevel < 16.0 -> """["highway"~"^(motorway|trunk|primary|secondary|tertiary|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"]"""
-            else -> """["highway"]"""
+        var fetchedSegments = emptyList<RoadSpeedSegment>()
+
+        // 3. Primary provider: OpenStreetMap Foundation REST API
+        val dLat = kotlin.math.abs(north - south)
+        val dLng = kotlin.math.abs(east - west)
+        if (dLat <= 0.15 && dLng <= 0.15) {
+            try {
+                val minLat = kotlin.math.min(south, north)
+                val maxLat = kotlin.math.max(south, north)
+                val minLng = kotlin.math.min(west, east)
+                val maxLng = kotlin.math.max(west, east)
+                val url = "https://api.openstreetmap.org/api/0.6/map?bbox=$minLng,$minLat,$maxLng,$maxLat"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "GPS-Speedometer-App/1.0 (+https://github.com/jakej985-rgb/GPS-speedometer; contact: jakej985@gmail.com; Android)")
+                    .header("Accept", "application/xml")
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string()
+                        if (!body.isNullOrBlank()) {
+                            fetchedSegments = parseOsmXmlRoadSegments(body, useMph)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Network error on OSM API, fallback to Overpass
+            }
         }
 
-        val query = """[out:json][timeout:12];way$highwayFilter["maxspeed"]($south,$west,$north,$east);out geom;"""
-        try {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val url = "https://overpass-api.de/api/interpreter?data=$encodedQuery"
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "GPS-Speedometer-App/1.0 (+https://github.com/jakej985-rgb/GPS-speedometer; contact: jakej985@gmail.com; Android)")
-                .header("Referer", "https://github.com/jakej985-rgb/GPS-speedometer")
-                .build()
+        // 4. Fallback provider: Overpass POST across multiple mirrors
+        if (fetchedSegments.isEmpty()) {
+            val highwayFilter = when {
+                zoomLevel < 14.0 -> """["highway"~"^(motorway|trunk|primary|motorway_link|trunk_link|primary_link)$"]"""
+                zoomLevel < 16.0 -> """["highway"~"^(motorway|trunk|primary|secondary|tertiary|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"]"""
+                else -> """["highway"]"""
+            }
+            val query = """[out:json][timeout:15];way$highwayFilter["maxspeed"]($south,$west,$north,$east);out geom;"""
+            val endpoints = listOf(
+                "https://overpass.kumi.systems/api/interpreter",
+                "https://overpass.private.coffee/api/interpreter",
+                "https://overpass-api.de/api/interpreter"
+            )
 
-            lastRoadQueryTimestamp = System.currentTimeMillis()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    synchronized(roadSegmentCache) {
-                        return@withContext roadSegmentCache.values.filter { seg ->
-                            seg.coordinates.any { (lat, lng) ->
-                                lat in south..north && lng in west..east
+            for (endpoint in endpoints) {
+                try {
+                    val formBody = FormBody.Builder().add("data", query).build()
+                    val request = Request.Builder()
+                        .url(endpoint)
+                        .post(formBody)
+                        .header("User-Agent", "GPS-Speedometer-App/1.0 (+https://github.com/jakej985-rgb/GPS-speedometer; contact: jakej985@gmail.com; Android)")
+                        .header("Referer", "https://github.com/jakej985-rgb/GPS-speedometer")
+                        .build()
+
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val body = response.body?.string()
+                            if (!body.isNullOrBlank()) {
+                                fetchedSegments = parseRoadSegmentsResponse(body, useMph)
                             }
                         }
                     }
-                }
-
-                val body = response.body?.string() ?: return@withContext emptyList()
-                val parsed = parseRoadSegmentsResponse(body, useMph)
-
-                if (parsed.isNotEmpty()) {
-                    try {
-                        offlineSpeedDao?.insertSegments(parsed.map { it.toEntity() })
-                    } catch (e: Exception) {
-                        // SQLite insertion error
-                    }
-                }
-
-                synchronized(cachedBBoxes) {
-                    if (cachedBBoxes.size > 50) cachedBBoxes.removeAt(0)
-                    cachedBBoxes.add(bboxKey)
-                }
-
-                synchronized(roadSegmentCache) {
-                    for (seg in parsed) {
-                        roadSegmentCache[seg.id] = seg
-                    }
-                    if (roadSegmentCache.size > 2000) {
-                        // Evict oldest entries
-                        val keysToRemove = roadSegmentCache.keys.take(500)
-                        keysToRemove.forEach { roadSegmentCache.remove(it) }
-                    }
-                    return@withContext roadSegmentCache.values.filter { seg ->
-                        seg.coordinates.any { (lat, lng) ->
-                            lat in south..north && lng in west..east
-                        }
-                    }
+                    if (fetchedSegments.isNotEmpty()) break
+                } catch (e: Exception) {
+                    // Try next Overpass endpoint
                 }
             }
-        } catch (e: Exception) {
+        }
+
+        lastRoadQueryTimestamp = System.currentTimeMillis()
+
+        if (fetchedSegments.isNotEmpty()) {
+            try {
+                offlineSpeedDao?.insertSegments(fetchedSegments.map { it.toEntity() })
+            } catch (e: Exception) {
+                // SQLite insertion error
+            }
+
+            synchronized(cachedBBoxes) {
+                if (cachedBBoxes.size > 50) cachedBBoxes.removeAt(0)
+                cachedBBoxes.add(bboxKey)
+            }
+
             synchronized(roadSegmentCache) {
-                roadSegmentCache.values.filter { seg ->
-                    seg.coordinates.any { (lat, lng) ->
-                        lat in south..north && lng in west..east
-                    }
+                for (seg in fetchedSegments) {
+                    roadSegmentCache[seg.id] = seg
+                }
+                if (roadSegmentCache.size > 2000) {
+                    // Evict oldest entries
+                    val keysToRemove = roadSegmentCache.keys.take(500)
+                    keysToRemove.forEach { roadSegmentCache.remove(it) }
+                }
+            }
+        }
+
+        synchronized(roadSegmentCache) {
+            return@withContext roadSegmentCache.values.filter { seg ->
+                seg.coordinates.any { (lat, lng) ->
+                    lat in south..north && lng in west..east
                 }
             }
         }
@@ -687,37 +722,84 @@ class SpeedLimitRepository(
         east: Double,
         useMph: Boolean
     ): Int = withContext(Dispatchers.IO) {
-        val query = """[out:json][timeout:25];way["highway"]["maxspeed"]($south,$west,$north,$east);out geom;"""
-        try {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val url = "https://overpass-api.de/api/interpreter?data=$encodedQuery"
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "GPS-Speedometer-App/1.0 (+https://github.com/jakej985-rgb/GPS-speedometer; contact: jakej985@gmail.com; Android)")
-                .header("Referer", "https://github.com/jakej985-rgb/GPS-speedometer")
-                .build()
+        val dLat = kotlin.math.abs(north - south)
+        val dLng = kotlin.math.abs(east - west)
+        var parsed = emptyList<RoadSpeedSegment>()
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext 0
-                val body = response.body?.string() ?: return@withContext 0
-                val parsed = parseRoadSegmentsResponse(body, useMph)
-                if (parsed.isNotEmpty()) {
-                    try {
-                        offlineSpeedDao?.insertSegments(parsed.map { it.toEntity() })
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                    synchronized(roadSegmentCache) {
-                        for (seg in parsed) {
-                            roadSegmentCache[seg.id] = seg
+        // 1. Try OSM API if area is within 0.20 degrees (~20km)
+        if (dLat <= 0.20 && dLng <= 0.20) {
+            try {
+                val minLat = kotlin.math.min(south, north)
+                val maxLat = kotlin.math.max(south, north)
+                val minLng = kotlin.math.min(west, east)
+                val maxLng = kotlin.math.max(west, east)
+                val url = "https://api.openstreetmap.org/api/0.6/map?bbox=$minLng,$minLat,$maxLng,$maxLat"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "GPS-Speedometer-App/1.0 (+https://github.com/jakej985-rgb/GPS-speedometer; contact: jakej985@gmail.com; Android)")
+                    .header("Accept", "application/xml")
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string()
+                        if (!body.isNullOrBlank()) {
+                            parsed = parseOsmXmlRoadSegments(body, useMph)
                         }
                     }
                 }
-                return@withContext parsed.size
+            } catch (e: Exception) {
+                // Fallback to Overpass
             }
-        } catch (e: Exception) {
-            return@withContext 0
         }
+
+        // 2. Fallback to Overpass POST across mirrors
+        if (parsed.isEmpty()) {
+            val query = """[out:json][timeout:25];way["highway"]["maxspeed"]($south,$west,$north,$east);out geom;"""
+            val endpoints = listOf(
+                "https://overpass.kumi.systems/api/interpreter",
+                "https://overpass.private.coffee/api/interpreter",
+                "https://overpass-api.de/api/interpreter"
+            )
+
+            for (endpoint in endpoints) {
+                try {
+                    val formBody = FormBody.Builder().add("data", query).build()
+                    val request = Request.Builder()
+                        .url(endpoint)
+                        .post(formBody)
+                        .header("User-Agent", "GPS-Speedometer-App/1.0 (+https://github.com/jakej985-rgb/GPS-speedometer; contact: jakej985@gmail.com; Android)")
+                        .header("Referer", "https://github.com/jakej985-rgb/GPS-speedometer")
+                        .build()
+
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val body = response.body?.string()
+                            if (!body.isNullOrBlank()) {
+                                parsed = parseRoadSegmentsResponse(body, useMph)
+                            }
+                        }
+                    }
+                    if (parsed.isNotEmpty()) break
+                } catch (e: Exception) {
+                    // Try next mirror
+                }
+            }
+        }
+
+        if (parsed.isNotEmpty()) {
+            try {
+                offlineSpeedDao?.insertSegments(parsed.map { it.toEntity() })
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            synchronized(roadSegmentCache) {
+                for (seg in parsed) {
+                    roadSegmentCache[seg.id] = seg
+                }
+            }
+        }
+        return@withContext parsed.size
     }
 
     suspend fun getOfflineRoadCount(): Int = withContext(Dispatchers.IO) {
@@ -742,23 +824,135 @@ class SpeedLimitRepository(
         }
     }
 
+    fun parseOsmXmlRoadSegments(xml: String, useMph: Boolean = true): List<RoadSpeedSegment> {
+        val segments = mutableListOf<RoadSpeedSegment>()
+        try {
+            val factory = DocumentBuilderFactory.newInstance()
+            val builder = factory.newDocumentBuilder()
+            val doc = builder.parse(ByteArrayInputStream(xml.toByteArray(Charsets.UTF_8)))
+
+            val nodeNodes = doc.getElementsByTagName("node")
+            val nodeCoords = mutableMapOf<Long, Pair<Double, Double>>()
+            for (i in 0 until nodeNodes.length) {
+                val nodeItem = nodeNodes.item(i)
+                if (nodeItem.nodeType != Node.ELEMENT_NODE) continue
+                val elem = nodeItem as Element
+                val id = elem.getAttribute("id").toLongOrNull() ?: continue
+                val lat = elem.getAttribute("lat").toDoubleOrNull() ?: continue
+                val lon = elem.getAttribute("lon").toDoubleOrNull() ?: continue
+                nodeCoords[id] = lat to lon
+            }
+
+            val wayNodes = doc.getElementsByTagName("way")
+            data class RawOsmWay(
+                val id: Long,
+                val name: String?,
+                val ref: String?,
+                val highway: String,
+                val maxspeed: String?,
+                val nodeRefs: List<Long>
+            )
+            val rawWays = mutableListOf<RawOsmWay>()
+            val ignoredHighways = setOf("footway", "cycleway", "path", "steps", "pedestrian", "service", "track")
+            val speedByRoadName = mutableMapOf<String, String>()
+
+            for (i in 0 until wayNodes.length) {
+                val wayItem = wayNodes.item(i)
+                if (wayItem.nodeType != Node.ELEMENT_NODE) continue
+                val elem = wayItem as Element
+                val id = elem.getAttribute("id").toLongOrNull() ?: continue
+
+                var highway: String? = null
+                var name: String? = null
+                var ref: String? = null
+                var maxspeed: String? = null
+
+                val tagNodes = elem.getElementsByTagName("tag")
+                for (j in 0 until tagNodes.length) {
+                    val tagItem = tagNodes.item(j)
+                    if (tagItem.nodeType != Node.ELEMENT_NODE) continue
+                    val tagElem = tagItem as Element
+                    when (tagElem.getAttribute("k")) {
+                        "highway" -> highway = tagElem.getAttribute("v")
+                        "name" -> name = tagElem.getAttribute("v")
+                        "ref" -> ref = tagElem.getAttribute("v")
+                        "maxspeed" -> maxspeed = tagElem.getAttribute("v")
+                    }
+                }
+
+                if (highway.isNullOrBlank() || highway in ignoredHighways) continue
+
+                val ndNodes = elem.getElementsByTagName("nd")
+                val nodeRefs = mutableListOf<Long>()
+                for (j in 0 until ndNodes.length) {
+                    val ndItem = ndNodes.item(j)
+                    if (ndItem.nodeType != Node.ELEMENT_NODE) continue
+                    val ndElem = ndItem as Element
+                    ndElem.getAttribute("ref").toLongOrNull()?.let { nodeRefs.add(it) }
+                }
+
+                rawWays.add(RawOsmWay(id, name, ref, highway, maxspeed, nodeRefs))
+                if (!maxspeed.isNullOrBlank()) {
+                    name?.let { speedByRoadName[it.lowercase()] = maxspeed }
+                    ref?.let { speedByRoadName[it.lowercase()] = maxspeed }
+                }
+            }
+
+            for (w in rawWays) {
+                val speedRaw = w.maxspeed
+                    ?: w.name?.let { speedByRoadName[it.lowercase()] }
+                    ?: w.ref?.let { speedByRoadName[it.lowercase()] }
+                    ?: continue
+
+                val (mph, kmh) = parseMaxSpeed(speedRaw, assumeMph = useMph)
+                if (mph == null || kmh == null) continue
+
+                val coords = w.nodeRefs.mapNotNull { nodeCoords[it] }
+                if (coords.size >= 2) {
+                    segments.add(
+                        RoadSpeedSegment(
+                            id = w.id,
+                            name = w.name ?: w.ref,
+                            highwayType = w.highway,
+                            speedLimitMph = mph,
+                            speedLimitKmh = kmh,
+                            coordinates = coords
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return segments
+    }
+
     fun parseRoadSegmentsResponse(json: String, useMph: Boolean = true): List<RoadSpeedSegment> {
         val result = mutableListOf<RoadSpeedSegment>()
         try {
             val root = JSONObject(json)
             val elements = root.optJSONArray("elements") ?: return emptyList()
+
+            data class JsonWay(
+                val id: Long,
+                val name: String?,
+                val ref: String?,
+                val highway: String,
+                val maxspeed: String?,
+                val coords: List<Pair<Double, Double>>
+            )
+            val jsonWays = mutableListOf<JsonWay>()
+            val speedByName = mutableMapOf<String, String>()
+
             for (i in 0 until elements.length()) {
                 val elem = elements.getJSONObject(i)
                 val id = elem.optLong("id")
                 val tags = elem.optJSONObject("tags") ?: continue
-                val maxspeed = tags.optString("maxspeed", "")
-                if (maxspeed.isBlank()) continue
-
-                val (mph, kmh) = parseMaxSpeed(maxspeed, assumeMph = useMph)
-                if (mph == null || kmh == null) continue
-
-                val highway = tags.optString("highway", "road")
-                val name = tags.optString("name", tags.optString("ref", "")).ifBlank { null }
+                val highway = tags.optString("highway", "")
+                if (highway.isBlank()) continue
+                val maxspeed = tags.optString("maxspeed", "").ifBlank { null }
+                val name = tags.optString("name", "").ifBlank { null }
+                val ref = tags.optString("ref", "").ifBlank { null }
                 val geom = elem.optJSONArray("geometry") ?: continue
                 val coords = mutableListOf<Pair<Double, Double>>()
                 for (j in 0 until geom.length()) {
@@ -766,7 +960,23 @@ class SpeedLimitRepository(
                     coords.add(pt.getDouble("lat") to pt.getDouble("lon"))
                 }
                 if (coords.size >= 2) {
-                    result.add(RoadSpeedSegment(id, name, highway, mph, kmh, coords))
+                    jsonWays.add(JsonWay(id, name, ref, highway, maxspeed, coords))
+                    if (maxspeed != null) {
+                        name?.let { speedByName[it.lowercase()] = maxspeed }
+                        ref?.let { speedByName[it.lowercase()] = maxspeed }
+                    }
+                }
+            }
+
+            for (w in jsonWays) {
+                val speedRaw = w.maxspeed
+                    ?: w.name?.let { speedByName[it.lowercase()] }
+                    ?: w.ref?.let { speedByName[it.lowercase()] }
+                    ?: continue
+
+                val (mph, kmh) = parseMaxSpeed(speedRaw, assumeMph = useMph)
+                if (mph != null && kmh != null) {
+                    result.add(RoadSpeedSegment(w.id, w.name ?: w.ref, w.highway, mph, kmh, w.coords))
                 }
             }
         } catch (e: Exception) {

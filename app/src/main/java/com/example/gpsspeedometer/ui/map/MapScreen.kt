@@ -201,6 +201,19 @@ fun MapScreen(
         mapView.addMapListener(mapListener)
         mapView.onResume()
 
+        mapView.post {
+            val bbox = mapView.boundingBox
+            if (bbox != null && bbox.latNorth != bbox.latSouth && bbox.latNorth != 0.0) {
+                viewModel.onViewportChanged(
+                    bbox.latSouth,
+                    bbox.lonWest,
+                    bbox.latNorth,
+                    bbox.lonEast,
+                    mapView.zoomLevelDouble
+                )
+            }
+        }
+
         onDispose {
             mapView.removeMapListener(mapListener)
             mapView.onPause()
@@ -226,11 +239,16 @@ fun MapScreen(
                     else -> 0xFFD32F2F.toInt()           // Red (fast expressway/interstate)
                 }
 
+                val density = context.resources.displayMetrics.density
+                val strokePx = (6.5f * density).coerceAtLeast(14f)
+
                 val polyline = Polyline().apply {
                     setPoints(geoPoints)
                     outlinePaint.color = roadColor
-                    outlinePaint.strokeWidth = 8f
-                    outlinePaint.alpha = 180
+                    outlinePaint.strokeWidth = strokePx
+                    outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+                    outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
+                    outlinePaint.alpha = 210
                 }
                 roadSpeedOverlay.add(polyline)
 
@@ -342,6 +360,44 @@ fun MapScreen(
 
             mapView.controller.animateTo(userGeoPoint)
             mapView.invalidate()
+
+            // Automatically load color-coded road speed limits around the current vehicle location
+            if (showRoadSpeedLimits) {
+                val bbox = mapView.boundingBox
+                if (bbox != null && bbox.latNorth != bbox.latSouth && bbox.latNorth != 0.0) {
+                    viewModel.onViewportChanged(
+                        bbox.latSouth,
+                        bbox.lonWest,
+                        bbox.latNorth,
+                        bbox.lonEast,
+                        mapView.zoomLevelDouble
+                    )
+                } else {
+                    val dLat = 0.015
+                    val dLng = 0.020
+                    viewModel.onViewportChanged(
+                        south = tripState.currentLat - dLat,
+                        west = tripState.currentLng - dLng,
+                        north = tripState.currentLat + dLat,
+                        east = tripState.currentLng + dLng,
+                        zoomLevel = mapView.zoomLevelDouble.coerceAtLeast(16.0)
+                    )
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(showRoadSpeedLimits) {
+        if (showRoadSpeedLimits && tripState.currentLat != 0.0 && tripState.currentLng != 0.0) {
+            val dLat = 0.015
+            val dLng = 0.020
+            viewModel.onViewportChanged(
+                south = tripState.currentLat - dLat,
+                west = tripState.currentLng - dLng,
+                north = tripState.currentLat + dLat,
+                east = tripState.currentLng + dLng,
+                zoomLevel = mapView.zoomLevelDouble.coerceAtLeast(16.0)
+            )
         }
     }
 

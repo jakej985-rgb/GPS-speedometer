@@ -390,6 +390,54 @@ class SpeedLimitRepositoryTest {
         assertTrue(csv.contains("47.498,-111.285,34.5,35,56,10th Avenue South,SUCCESS,OsmApi,Way 142995074 via OsmApi"))
     }
 
+    @Test
+    fun `test parseOsmXmlRoadSegments resolves node coords and dual-carriageway speed inheritance`() {
+        val repository = SpeedLimitRepository()
+        val mockOsmXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <osm version="0.6">
+              <node id="1" lat="47.490" lon="-111.280"/>
+              <node id="2" lat="47.495" lon="-111.285"/>
+              <node id="3" lat="47.500" lon="-111.290"/>
+              <node id="4" lat="47.491" lon="-111.281"/>
+              <node id="5" lat="47.496" lon="-111.286"/>
+
+              <!-- Eastbound 10th Ave S with posted 35 mph -->
+              <way id="101">
+                <nd ref="1"/>
+                <nd ref="2"/>
+                <nd ref="3"/>
+                <tag k="highway" v="trunk"/>
+                <tag k="name" v="10th Avenue South"/>
+                <tag k="maxspeed" v="35 mph"/>
+              </way>
+
+              <!-- Westbound 10th Ave S without maxspeed tag -->
+              <way id="102">
+                <nd ref="4"/>
+                <nd ref="5"/>
+                <tag k="highway" v="trunk"/>
+                <tag k="name" v="10th Avenue South"/>
+              </way>
+            </osm>
+        """.trimIndent()
+
+        val segments = repository.parseOsmXmlRoadSegments(mockOsmXml, useMph = true)
+        assertEquals(2, segments.size)
+
+        val way101 = segments.first { it.id == 101L }
+        assertEquals("10th Avenue South", way101.name)
+        assertEquals(35, way101.speedLimitMph)
+        assertEquals(3, way101.coordinates.size)
+        assertEquals(47.490, way101.coordinates[0].first, 0.0001)
+
+        val way102 = segments.first { it.id == 102L }
+        assertEquals("10th Avenue South", way102.name)
+        assertEquals(35, way102.speedLimitMph)
+        assertEquals(2, way102.coordinates.size)
+        assertEquals(47.491, way102.coordinates[0].first, 0.0001)
+    }
+
     private class FakeOfflineSpeedDao : com.example.gpsspeedometer.data.OfflineSpeedDao {
         val storage = mutableListOf<com.example.gpsspeedometer.data.OfflineRoadSegmentEntity>()
 
