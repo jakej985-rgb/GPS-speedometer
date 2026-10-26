@@ -223,4 +223,76 @@ class TripManagerTest {
             assertEquals(50f, state.distanceMeters, 0.1f)
         }
     }
+
+    @Test
+    fun `test stationary interval longer than maxDeltaSec does not deadlock trip accumulation`() = testScope.runTest {
+        mockStatic(Location::class.java).use { mockLocation ->
+            var simulatedDist = 0f
+            mockLocation.`when`<Any> {
+                Location.distanceBetween(any(), any(), any(), any(), any())
+            }.thenAnswer { invocation ->
+                val results = invocation.arguments[4] as FloatArray
+                results[0] = simulatedDist
+                null
+            }
+
+            whenever(tripDao.insertTrip(any())).thenReturn(1L)
+            tripManager.startTrip()
+            testScheduler.advanceUntilIdle()
+
+            // 1. Initial point
+            val loc1 = LocationSample(1000, 37.77, -122.42, 0f, 5f, 0f)
+            tripManager.processLocation(loc1)
+
+            // 2. Stationary point (e.g. stopped at red light for 20 seconds, well above maxDeltaSec of 10s)
+            simulatedDist = 0.5f // < minSegmentMeters (3m)
+            val locStationary = LocationSample(20000, 37.770001, -122.42, 0f, 5f, 0f)
+            tripManager.processLocation(locStationary)
+            assertEquals(0f, tripManager.tripState.value.distanceMeters, 0.001f)
+
+            // 3. Movement resumes: 15 meters in 1 second
+            simulatedDist = 15f
+            val locMoving = LocationSample(21000, 37.7701, -122.42, 15f, 5f, 0f)
+            tripManager.processLocation(locMoving)
+
+            // Verify distance accumulation succeeded and did NOT deadlock
+            val state = tripManager.tripState.value
+            assertEquals(15f, state.distanceMeters, 0.1f)
+            assertTrue("Max speed should be tracked", state.maxSpeedMph > 0f)
+            assertTrue("Average speed should be tracked", state.avgSpeedMph > 0f)
+        }
+    }
+
+    @Test
+    fun `test max speed updates during valid movement even with initial stops`() = testScope.runTest {
+        whenever(tripDao.insertTrip(any())).thenReturn(1L)
+        tripManager.startTrip()
+        testScheduler.advanceUntilIdle()
+
+        // 45 mph = ~20.1 m/s
+        val loc = LocationSample(1000, 37.77, -122.42, 20.1f, 5f, 0f)
+        tripManager.processLocation(loc)
+
+        val state = tripManager.tripState.value
+        assertTrue("Max speed should reflect smoothed speed above 0", state.maxSpeedMph > 20f)
+    }
+
+    @Test
+    fun `test speed limit flow updates propagate to trip state`() = testScope.runTest {
+        val limitFlow = MutableStateFlow(com.example.gpsspeedometer.domain.SpeedLimitInfo())
+        val mockRepo: com.example.gpsspeedometer.speedlimit.SpeedLimitRepository = mock()
+        whenever(mockRepo.speedLimitFlow).thenReturn(limitFlow)
+
+        val customTripManager = TripManager(settingsRepository, tripDao, testScope.backgroundScope, mockRepo)
+        assertEquals(null, customTripManager.tripState.value.speedLimitMph)
+
+        limitFlow.value = com.example.gpsspeedometer.domain.SpeedLimitInfo(
+            speedLimitMph = 45,
+            roadName = "Main Street"
+        )
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(45, customTripManager.tripState.value.speedLimitMph)
+        assertEquals("Main Street", customTripManager.tripState.value.roadName)
+    }
 }

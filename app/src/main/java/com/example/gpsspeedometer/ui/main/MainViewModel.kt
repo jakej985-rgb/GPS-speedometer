@@ -46,16 +46,18 @@ class MainViewModel(
     private var foregroundLocationJob: Job? = null
 
     init {
-        // Collect live location for speedometer when not recording in background service
+        // Collect live location for speedometer while UI is active
+        startForegroundLocationUpdates()
+
+        // Restart location collection if user modifies sample interval in settings
         viewModelScope.launch {
-            tripState
-                .map { it.isRecording }
+            settings
+                .map { it.sampleIntervalMs }
                 .distinctUntilChanged()
-                .collect { isRecording ->
-                    if (!isRecording) {
-                        startForegroundLocationUpdates()
-                    } else {
+                .collect {
+                    if (foregroundLocationJob?.isActive == true) {
                         stopForegroundLocationUpdates()
+                        startForegroundLocationUpdates()
                     }
                 }
         }

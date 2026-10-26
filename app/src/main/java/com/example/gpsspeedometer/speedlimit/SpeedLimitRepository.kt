@@ -133,25 +133,35 @@ class SpeedLimitRepository(
     }
 
     private suspend fun fetchFromOverpass(lat: Double, lng: Double, useMph: Boolean): SpeedLimitInfo? = withContext(Dispatchers.IO) {
-        try {
-            // Overpass QL query around 25 meters
-            val query = """[out:json][timeout:8];way(around:25.0,$lat,$lng)["highway"]["maxspeed"];out tags;"""
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val url = "https://overpass-api.de/api/interpreter?data=$encodedQuery"
+        val query = """[out:json][timeout:8];way(around:50.0,$lat,$lng)["highway"]["maxspeed"];out tags;"""
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
 
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "GPS-Speedometer-App/1.0 (+https://github.com/jakej985-rgb/GPS-speedometer; contact: jakej985@gmail.com; Android)")
-                .build()
+        val endpoints = listOf(
+            "https://overpass-api.de/api/interpreter?data=$encodedQuery",
+            "https://overpass.kumi.systems/api/interpreter?data=$encodedQuery"
+        )
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val body = response.body?.string() ?: return@withContext null
-                parseOverpassResponse(body, useMph)
+        for (url in endpoints) {
+            try {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "GPS-Speedometer-App/1.0 (+https://github.com/jakej985-rgb/GPS-speedometer; contact: jakej985@gmail.com; Android)")
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string()
+                        if (body != null) {
+                            val parsed = parseOverpassResponse(body, useMph)
+                            if (parsed != null) return@withContext parsed
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Try next endpoint
             }
-        } catch (e: Exception) {
-            null
         }
+        null
     }
 
     fun parseOverpassResponse(json: String, useMph: Boolean = true): SpeedLimitInfo? {

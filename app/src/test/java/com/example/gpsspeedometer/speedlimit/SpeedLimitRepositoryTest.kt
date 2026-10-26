@@ -283,6 +283,29 @@ class SpeedLimitRepositoryTest {
         assertEquals(0, fakeDao.getSegmentCount())
     }
 
+    @Test
+    fun `test parseOverpassResponse with invalid tags or missing maxspeed returns null safely`() {
+        val repository = SpeedLimitRepository()
+        val mockJson = """
+            {
+                "version": 0.6,
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 99999,
+                        "tags": {
+                            "highway": "unclassified",
+                            "name": "Unnamed Road"
+                        }
+                    }
+                ]
+            }
+        """.trimIndent()
+
+        val result = repository.parseOverpassResponse(mockJson, useMph = true)
+        assertNull(result)
+    }
+
     private class FakeOfflineSpeedDao : com.example.gpsspeedometer.data.OfflineSpeedDao {
         val storage = mutableListOf<com.example.gpsspeedometer.data.OfflineRoadSegmentEntity>()
 
