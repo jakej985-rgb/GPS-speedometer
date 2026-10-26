@@ -71,7 +71,8 @@ class MainViewModel(
                             lat = state.currentLat,
                             lng = state.currentLng,
                             useMph = settings.value.useMph,
-                            offlineMode = settings.value.offlineMode
+                            offlineMode = settings.value.offlineMode,
+                            currentSpeedMph = state.currentSpeedMph
                         )
                     } catch (e: Exception) {
                         Log.e("MainViewModel", "Speed limit query exception", e)
@@ -137,6 +138,12 @@ class MainViewModel(
             }
         } catch (e: Exception) {
             Log.e("MainViewModel", "Failed to send command $action to TrackingService", e)
+        }
+    }
+
+    fun updateOrientationLock(lock: String) {
+        viewModelScope.launch {
+            settingsRepository.updateOrientationLock(lock)
         }
     }
 

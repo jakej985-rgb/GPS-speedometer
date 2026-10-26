@@ -214,7 +214,8 @@ class TripManager(
                         lat = location.lat,
                         lng = location.lng,
                         useMph = settings.useMph,
-                        offlineMode = settings.offlineMode
+                        offlineMode = settings.offlineMode,
+                        currentSpeedMph = tripState.value.currentSpeedMph
                     )
                 } catch (e: Exception) {
                     Log.e("TripManager", "Error querying speed limit in processLocation", e)

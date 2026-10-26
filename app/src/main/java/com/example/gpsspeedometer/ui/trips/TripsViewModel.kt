@@ -10,6 +10,7 @@ import com.example.gpsspeedometer.data.SettingsRepository
 import com.example.gpsspeedometer.data.TripDao
 import com.example.gpsspeedometer.data.TripEntity
 import com.example.gpsspeedometer.data.TripPointEntity
+import com.example.gpsspeedometer.speedlimit.SpeedLimitRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -24,11 +25,12 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-enum class ExportType { SUMMARY, POINTS, GPX }
+enum class ExportType { SUMMARY, POINTS, GPX, DIAGNOSTIC }
 
 class TripsViewModel(
     private val tripDao: TripDao,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val speedLimitRepository: SpeedLimitRepository? = null
 ) : ViewModel() {
 
     val trips = tripDao.getAllTrips()
@@ -50,8 +52,26 @@ class TripsViewModel(
         return tripDao.getTripById(id)
     }
 
+    fun exportDiagnosticLog(context: Context, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+                    speedLimitRepository?.exportDiagnosticCsv(outputStream)
+                }
+                _exportEvent.emit("Speed diagnostic log exported successfully")
+            } catch (e: Exception) {
+                _exportEvent.emit("Export failed: ${e.localizedMessage ?: "Unknown error"}")
+            }
+        }
+    }
+
     fun exportTrip(context: Context, tripId: Long, uri: Uri, type: ExportType) {
         viewModelScope.launch(Dispatchers.IO) {
+            if (type == ExportType.DIAGNOSTIC) {
+                exportDiagnosticLog(context, uri)
+                return@launch
+            }
+
             val trip = tripDao.getTripById(tripId)
             if (trip == null) {
                 _exportEvent.emit("Export failed: Trip not found")
@@ -82,6 +102,7 @@ class TripsViewModel(
                                 val points = tripDao.getTripPoints(tripId)
                                 writer.write(buildGpx(trip, points))
                             }
+                            ExportType.DIAGNOSTIC -> { /* handled above */ }
                         }
                     }
                 }
@@ -138,12 +159,13 @@ class TripsViewModel(
 
     class Factory(
         private val tripDao: TripDao,
-        private val settingsRepository: SettingsRepository
+        private val settingsRepository: SettingsRepository,
+        private val speedLimitRepository: SpeedLimitRepository? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             if (modelClass.isAssignableFrom(TripsViewModel::class.java)) {
-                return TripsViewModel(tripDao, settingsRepository) as T
+                return TripsViewModel(tripDao, settingsRepository, speedLimitRepository) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class")
         }

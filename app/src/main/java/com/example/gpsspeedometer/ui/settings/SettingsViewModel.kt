@@ -66,6 +66,14 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
         viewModelScope.launch { repository.updateOfflineMode(enabled) }
     }
 
+    fun updateOrientationLock(value: String) {
+        viewModelScope.launch { repository.updateOrientationLock(value) }
+    }
+
+    fun updateDarkMode(value: String) {
+        viewModelScope.launch { repository.updateDarkMode(value) }
+    }
+
     fun resetToDefaults() {
         viewModelScope.launch { repository.resetToDefaults() }
     }

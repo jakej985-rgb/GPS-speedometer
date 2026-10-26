@@ -96,6 +96,12 @@ class MapViewModel(
         }
     }
 
+    fun updateOrientationLock(lock: String) {
+        viewModelScope.launch {
+            settingsRepository.updateOrientationLock(lock)
+        }
+    }
+
     fun importArchive(uri: Uri, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             val success = offlineMapManager?.importArchive(uri) ?: false

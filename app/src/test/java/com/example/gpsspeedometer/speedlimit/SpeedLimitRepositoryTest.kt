@@ -306,6 +306,90 @@ class SpeedLimitRepositoryTest {
         assertNull(result)
     }
 
+    @Test
+    fun `test parseOsmXml with dual carriageway inherits speed limit from sibling carriageway`() {
+        val repository = SpeedLimitRepository()
+        val mockOsmXml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <osm version="0.6">
+              <way id="142995074">
+                <tag k="highway" v="trunk"/>
+                <tag k="name" v="10th Avenue South"/>
+                <tag k="maxspeed" v="35 mph"/>
+              </way>
+              <way id="913479990">
+                <tag k="highway" v="trunk"/>
+                <tag k="name" v="10th Avenue South"/>
+              </way>
+            </osm>
+        """.trimIndent()
+
+        val result = repository.parseOsmXml(mockOsmXml, useMph = true)
+        assertNotNull(result)
+        assertEquals(35, result?.speedLimitMph)
+        assertEquals(56, result?.speedLimitKmh)
+        assertEquals("10th Avenue South", result?.roadName)
+    }
+
+    @Test
+    fun `test parseOverpassResponse with dual carriageway inherits speed limit`() {
+        val repository = SpeedLimitRepository()
+        val mockJson = """
+            {
+                "version": 0.6,
+                "elements": [
+                    {
+                        "type": "way",
+                        "id": 913479990,
+                        "tags": {
+                            "highway": "trunk",
+                            "name": "10th Avenue South"
+                        }
+                    },
+                    {
+                        "type": "way",
+                        "id": 142995074,
+                        "tags": {
+                            "highway": "trunk",
+                            "name": "10th Avenue South",
+                            "maxspeed": "35 mph"
+                        }
+                    }
+                ]
+            }
+        """.trimIndent()
+
+        val result = repository.parseOverpassResponse(mockJson, useMph = true)
+        assertNotNull(result)
+        assertEquals(35, result?.speedLimitMph)
+        assertEquals("10th Avenue South", result?.roadName)
+    }
+
+    @Test
+    fun `test exportDiagnosticCsv exports valid CSV data`() {
+        val repository = SpeedLimitRepository()
+        repository.recordDiagnostic(
+            SpeedLimitLookupEvent(
+                lat = 47.498,
+                lng = -111.285,
+                currentSpeedMph = 34.5f,
+                speedLimitMph = 35,
+                speedLimitKmh = 56,
+                roadName = "10th Avenue South",
+                status = "SUCCESS",
+                provider = "OsmApi",
+                details = "Way 142995074 via OsmApi"
+            )
+        )
+
+        val output = java.io.ByteArrayOutputStream()
+        repository.exportDiagnosticCsv(output)
+        val csv = output.toString("UTF-8")
+
+        assertTrue(csv.startsWith("timestamp_iso,timestamp,latitude,longitude,speed_mph,speed_limit_mph,speed_limit_kmh,road_name,status,provider,details\n"))
+        assertTrue(csv.contains("47.498,-111.285,34.5,35,56,10th Avenue South,SUCCESS,OsmApi,Way 142995074 via OsmApi"))
+    }
+
     private class FakeOfflineSpeedDao : com.example.gpsspeedometer.data.OfflineSpeedDao {
         val storage = mutableListOf<com.example.gpsspeedometer.data.OfflineRoadSegmentEntity>()
 

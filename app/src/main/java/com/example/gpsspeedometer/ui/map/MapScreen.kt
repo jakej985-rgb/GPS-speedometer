@@ -31,7 +31,14 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.ScreenLockLandscape
+import androidx.compose.material.icons.filled.ScreenLockPortrait
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Storage
+import android.content.res.Configuration
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.platform.LocalConfiguration
+import org.osmdroid.views.overlay.TilesOverlay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -120,6 +127,10 @@ fun MapScreen(
     val isPastTripView = pastTrip != null || pastTripPoints.isNotEmpty()
     val title = pastTrip?.name ?: if (isPastTripView) "Trip Route" else "Live Road Map"
 
+    val configuration = LocalConfiguration.current
+    val isCurrentLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isOrientationLocked = settings.orientationLock != "unlocked"
+
     val roadSpeedOverlay = remember { FolderOverlay() }
     val userMarkerRef = remember { mutableStateOf<Marker?>(null) }
 
@@ -142,6 +153,23 @@ fun MapScreen(
     // Apply offline mode to map tile downloader (blocks 100% of outgoing network requests when true)
     LaunchedEffect(settings.offlineMode) {
         mapView.setUseDataConnection(!settings.offlineMode)
+    }
+
+    val isSystemDark = isSystemInDarkTheme()
+    val isDarkTheme = when (settings.darkMode) {
+        "dark" -> true
+        "light" -> false
+        else -> isSystemDark
+    }
+
+    // Apply night mode color filter to OSM map tiles when dark mode is enabled
+    LaunchedEffect(isDarkTheme) {
+        if (isDarkTheme) {
+            mapView.overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERT_COLORS)
+        } else {
+            mapView.overlayManager.tilesOverlay.setColorFilter(null)
+        }
+        mapView.invalidate()
     }
 
     DisposableEffect(mapView) {
@@ -340,6 +368,31 @@ fun MapScreen(
                                 color = MaterialTheme.colorScheme.onTertiaryContainer
                             )
                         }
+                    }
+                    IconButton(onClick = {
+                        if (isOrientationLocked) {
+                            viewModel.updateOrientationLock("unlocked")
+                            Toast.makeText(context, "Orientation unlocked (auto-rotate)", Toast.LENGTH_SHORT).show()
+                        } else {
+                            if (isCurrentLandscape) {
+                                viewModel.updateOrientationLock("landscape")
+                                Toast.makeText(context, "Orientation locked: Landscape", Toast.LENGTH_SHORT).show()
+                            } else {
+                                viewModel.updateOrientationLock("portrait")
+                                Toast.makeText(context, "Orientation locked: Portrait", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }) {
+                        val icon = when (settings.orientationLock) {
+                            "landscape" -> Icons.Default.ScreenLockLandscape
+                            "portrait" -> Icons.Default.ScreenLockPortrait
+                            else -> Icons.Default.ScreenRotation
+                        }
+                        Icon(
+                            icon,
+                            contentDescription = if (isOrientationLocked) "Unlock Orientation" else "Lock Orientation",
+                            tint = if (isOrientationLocked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     Box {
                         IconButton(onClick = { showLayerMenu = true }) {

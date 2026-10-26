@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,8 +87,23 @@ class MainActivity : ComponentActivity() {
                 }
         }
 
+        // Screen orientation lock handling
+        lifecycleScope.launch {
+            appContainer.settingsRepository.settingsFlow
+                .map { it.orientationLock }
+                .distinctUntilChanged()
+                .collect { lockState ->
+                    requestedOrientation = when (lockState) {
+                        "landscape" -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        "portrait" -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                        else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
+                }
+        }
+
         setContent {
-            MaterialTheme {
+            val settings by appContainer.settingsRepository.settingsFlow.collectAsState(initial = com.example.gpsspeedometer.data.AppSettings())
+            com.example.gpsspeedometer.ui.theme.GpsSpeedometerTheme(darkMode = settings.darkMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -290,7 +306,11 @@ fun AppNavigation(appContainer: com.example.gpsspeedometer.di.AppContainer) {
 
         composable("trips") {
             val viewModel: TripsViewModel = viewModel(
-                factory = TripsViewModel.Factory(appContainer.database.tripDao(), appContainer.settingsRepository)
+                factory = TripsViewModel.Factory(
+                    appContainer.database.tripDao(),
+                    appContainer.settingsRepository,
+                    appContainer.speedLimitRepository
+                )
             )
             TripsScreen(
                 viewModel = viewModel,
@@ -305,7 +325,11 @@ fun AppNavigation(appContainer: com.example.gpsspeedometer.di.AppContainer) {
         ) { backStackEntry ->
             val tripId = backStackEntry.arguments?.getLong("tripId") ?: return@composable
             val viewModel: TripsViewModel = viewModel(
-                factory = TripsViewModel.Factory(appContainer.database.tripDao(), appContainer.settingsRepository)
+                factory = TripsViewModel.Factory(
+                    appContainer.database.tripDao(),
+                    appContainer.settingsRepository,
+                    appContainer.speedLimitRepository
+                )
             )
             TripDetailScreen(
                 tripId = tripId,

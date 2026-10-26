@@ -86,6 +86,13 @@ fun TripDetailScreen(
         }
     )
 
+    val exportDiagnosticLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv"),
+        onResult = { uri ->
+            uri?.let { viewModel.exportDiagnosticLog(context, it) }
+        }
+    )
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -179,6 +186,15 @@ fun TripDetailScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Export Points CSV")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = { exportDiagnosticLauncher.launch("speed_diagnostics.csv") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Export Speed Diagnostic Log (.csv)")
                 }
             }
         }

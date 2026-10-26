@@ -18,7 +18,14 @@ import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ScreenLockLandscape
+import androidx.compose.material.icons.filled.ScreenLockPortrait
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Stop
+import android.content.res.Configuration
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -94,6 +101,11 @@ fun SpeedometerScreen(
         )
     }
 
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isCurrentLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isOrientationLocked = settings.orientationLock != "unlocked"
+
     Scaffold { padding ->
         Column(
             modifier = Modifier
@@ -131,6 +143,32 @@ fun SpeedometerScreen(
                 }
 
                 Row {
+                    IconButton(onClick = {
+                        if (isOrientationLocked) {
+                            viewModel.updateOrientationLock("unlocked")
+                            Toast.makeText(context, "Orientation unlocked (auto-rotate)", Toast.LENGTH_SHORT).show()
+                        } else {
+                            if (isCurrentLandscape) {
+                                viewModel.updateOrientationLock("landscape")
+                                Toast.makeText(context, "Orientation locked: Landscape", Toast.LENGTH_SHORT).show()
+                            } else {
+                                viewModel.updateOrientationLock("portrait")
+                                Toast.makeText(context, "Orientation locked: Portrait", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }) {
+                        val icon = when (settings.orientationLock) {
+                            "landscape" -> Icons.Default.ScreenLockLandscape
+                            "portrait" -> Icons.Default.ScreenLockPortrait
+                            else -> Icons.Default.ScreenRotation
+                        }
+                        Icon(
+                            icon,
+                            contentDescription = if (isOrientationLocked) "Unlock Orientation" else "Lock Orientation",
+                            tint = if (isOrientationLocked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     IconButton(onClick = onNavigateToMap) {
                         Icon(
                             Icons.Default.Map,

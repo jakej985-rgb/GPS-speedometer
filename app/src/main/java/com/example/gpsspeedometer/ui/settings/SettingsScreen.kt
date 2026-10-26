@@ -156,6 +156,64 @@ fun SettingsScreen(
                         range = 10f..200f,
                         onValueChangeFinished = { viewModel.updateSpeedAlertLimit(it) }
                     )
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                    Text(
+                        text = "Theme / Dark Mode",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Choose light, dark, or follow device system settings",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("system" to "System", "light" to "Light", "dark" to "Dark").forEach { (modeKey, label) ->
+                            FilterChip(
+                                selected = settings.darkMode == modeKey,
+                                onClick = { viewModel.updateDarkMode(modeKey) },
+                                label = { Text(label) },
+                                leadingIcon = if (settings.darkMode == modeKey) {
+                                    { Icon(Icons.Default.Check, contentDescription = null, Modifier.size(16.dp)) }
+                                } else null
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                    Text(
+                        text = "Screen Orientation",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Lock to landscape for dash mounts, or allow auto-rotate",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("unlocked" to "Auto-rotate", "landscape" to "Landscape", "portrait" to "Portrait").forEach { (lockKey, label) ->
+                            FilterChip(
+                                selected = settings.orientationLock == lockKey,
+                                onClick = { viewModel.updateOrientationLock(lockKey) },
+                                label = { Text(label) },
+                                leadingIcon = if (settings.orientationLock == lockKey) {
+                                    { Icon(Icons.Default.Check, contentDescription = null, Modifier.size(16.dp)) }
+                                } else null
+                            )
+                        }
+                    }
                 }
             }
 
