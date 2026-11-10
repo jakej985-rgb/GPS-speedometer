@@ -1,6 +1,7 @@
 package com.example.gpsspeedometer.logic
 
 import android.location.Location
+import android.os.SystemClock
 import android.util.Log
 import com.example.gpsspeedometer.data.AppSettings
 import com.example.gpsspeedometer.data.SettingsRepository
@@ -76,8 +77,9 @@ class TripManager(
     fun startTrip() {
         if (_tripState.value.isRecording) return
 
+        // Wall clock for the calendar start; monotonic clock for elapsed-time math
         val now = System.currentTimeMillis()
-        tripStartTime = now
+        tripStartTime = SystemClock.elapsedRealtime()
         totalPausedDurationMs = 0L
         lastPauseTimestamp = 0L
         lastValidLocation = null
@@ -124,14 +126,14 @@ class TripManager(
 
     fun pauseTrip() {
         if (!_tripState.value.isRecording || _tripState.value.isPaused) return
-        lastPauseTimestamp = System.currentTimeMillis()
+        lastPauseTimestamp = SystemClock.elapsedRealtime()
         _tripState.update { it.copy(isPaused = true) }
     }
 
     fun resumeTrip() {
         if (!_tripState.value.isRecording || !_tripState.value.isPaused) return
         if (lastPauseTimestamp > 0L) {
-            totalPausedDurationMs += (System.currentTimeMillis() - lastPauseTimestamp)
+            totalPausedDurationMs += (SystemClock.elapsedRealtime() - lastPauseTimestamp)
             lastPauseTimestamp = 0L
         }
         _tripState.update { it.copy(isPaused = false) }
@@ -156,12 +158,13 @@ class TripManager(
         if (!_tripState.value.isRecording) return
 
         val now = System.currentTimeMillis()
+        val nowMono = SystemClock.elapsedRealtime()
         if (_tripState.value.isPaused && lastPauseTimestamp > 0L) {
-            totalPausedDurationMs += (now - lastPauseTimestamp)
+            totalPausedDurationMs += (nowMono - lastPauseTimestamp)
             lastPauseTimestamp = 0L
         }
         val finalElapsedMs = if (tripStartTime > 0L) {
-            max(0L, now - tripStartTime - totalPausedDurationMs)
+            max(0L, nowMono - tripStartTime - totalPausedDurationMs)
         } else {
             _tripState.value.elapsedMs
         }
@@ -257,9 +260,9 @@ class TripManager(
 
         val isAccurate = location.accuracyMeters <= settings.accuracyThresholdMeters
 
-        // Elapsed time uses a single wall-clock base with pauses excluded
+        // Elapsed time uses a monotonic clock (immune to device clock changes) with pauses excluded
         val currentElapsed = if (tripStartTime > 0L) {
-            max(0L, System.currentTimeMillis() - tripStartTime - totalPausedDurationMs)
+            max(0L, SystemClock.elapsedRealtime() - tripStartTime - totalPausedDurationMs)
         } else {
             _tripState.value.elapsedMs
         }
@@ -294,10 +297,13 @@ class TripManager(
                         // Spike plausibility check
                         val impliedMph = if (deltaSec > 0) (dist / deltaSec) * 2.23694f else 0f
                         if (impliedMph <= settings.maxPlausibleMph) {
-                            // Only advance the anchor once the segment is long enough, so slow
-                            // movement accumulates across samples. Long stationary gaps are
-                            // handled by the maxDeltaSec reset above.
-                            if (dist >= settings.minSegmentMeters) {
+                            // Use the GPS-reported speed as motion evidence: when stationary, keep the
+                            // anchor fresh so drift never accumulates; when moving, hold the anchor until
+                            // the segment reaches minSegmentMeters so slow movement adds up.
+                            val isMoving = location.speedMps >= STATIONARY_SPEED_MPS
+                            if (!isMoving) {
+                                lastValidLocation = location
+                            } else if (dist >= settings.minSegmentMeters) {
                                 newDistance += dist
                                 shouldPersistPoint = true
                                 lastValidLocation = location
@@ -344,6 +350,11 @@ class TripManager(
         if (shouldPersistPoint) {
             persistPoint(location, rawMph, smoothedMph, currentSpeedLimit?.speedLimitMph)
         }
+    }
+
+    private companion object {
+        // Below ~1.1 mph the device is treated as stationary for distance accumulation
+        const val STATIONARY_SPEED_MPS = 0.5f
     }
 
     private fun calculateSmoothedSpeed(rawMph: Float): Float {
