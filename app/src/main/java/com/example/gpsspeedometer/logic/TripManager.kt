@@ -47,7 +47,6 @@ class TripManager(
 
     // Wall-clock & location time tracking for accurate elapsed time accounting (including pauses)
     private var tripStartTime: Long = 0L
-    private var firstLocationTimestamp: Long = 0L
     private var totalPausedDurationMs: Long = 0L
     private var lastPauseTimestamp: Long = 0L
 
@@ -79,7 +78,6 @@ class TripManager(
 
         val now = System.currentTimeMillis()
         tripStartTime = now
-        firstLocationTimestamp = 0L
         totalPausedDurationMs = 0L
         lastPauseTimestamp = 0L
         lastValidLocation = null
@@ -89,8 +87,9 @@ class TripManager(
             _speedHistory.value = emptyList()
         }
 
-        // Comma-free (CSV-safe) and second-precision so back-to-back trips are distinguishable
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        // Comma-free, second-precision, and timezone-explicit so the label stays unambiguous
+        // even if the device timezone later changes
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss z", Locale.getDefault())
         val tripName = "Trip - ${dateFormat.format(Date(now))}"
 
         scope.launch {
@@ -186,7 +185,6 @@ class TripManager(
         }
         currentTripId = null
         tripStartTime = 0L
-        firstLocationTimestamp = 0L
         totalPausedDurationMs = 0L
 
         scope.launch {
@@ -257,28 +255,18 @@ class TripManager(
             return
         }
 
-        // Always track max speed on accurate GPS samples
         val isAccurate = location.accuracyMeters <= settings.accuracyThresholdMeters
-        val newMaxSpeed = if (isAccurate) max(_tripState.value.maxSpeedMph, smoothedMph) else _tripState.value.maxSpeedMph
 
-        // Calculate elapsed time (supporting wall-clock and location timestamps)
-        if (firstLocationTimestamp == 0L && location.timestamp > 0L) {
-            firstLocationTimestamp = location.timestamp
-        }
-        val wallClockElapsed = if (tripStartTime > 0L) {
+        // Elapsed time uses a single wall-clock base with pauses excluded
+        val currentElapsed = if (tripStartTime > 0L) {
             max(0L, System.currentTimeMillis() - tripStartTime - totalPausedDurationMs)
         } else {
             _tripState.value.elapsedMs
         }
-        val locationElapsed = if (firstLocationTimestamp > 0L && location.timestamp >= firstLocationTimestamp) {
-            max(0L, location.timestamp - firstLocationTimestamp)
-        } else {
-            0L
-        }
-        val currentElapsed = max(wallClockElapsed, locationElapsed)
 
         var newDistance = _tripState.value.distanceMeters
         var shouldPersistPoint = false
+        var isSpike = false
 
         if (isAccurate) {
             if (lastValidLocation == null) {
@@ -306,17 +294,27 @@ class TripManager(
                         // Spike plausibility check
                         val impliedMph = if (deltaSec > 0) (dist / deltaSec) * 2.23694f else 0f
                         if (impliedMph <= settings.maxPlausibleMph) {
+                            // Only advance the anchor once the segment is long enough, so slow
+                            // movement accumulates across samples. Long stationary gaps are
+                            // handled by the maxDeltaSec reset above.
                             if (dist >= settings.minSegmentMeters) {
                                 newDistance += dist
                                 shouldPersistPoint = true
+                                lastValidLocation = location
                             }
-                            // Keep lastValidLocation fresh (even if stationary < minSegmentMeters)
-                            // to prevent deltaSec from building up beyond maxDeltaSec and deadlocking
-                            lastValidLocation = location
+                        } else {
+                            isSpike = true
                         }
                     }
                 }
             }
+        }
+
+        // Only count max speed on accurate, non-spike samples
+        val newMaxSpeed = if (isAccurate && !isSpike) {
+            max(_tripState.value.maxSpeedMph, smoothedMph)
+        } else {
+            _tripState.value.maxSpeedMph
         }
 
         val elapsedHours = currentElapsed / 3600000f

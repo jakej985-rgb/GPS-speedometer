@@ -46,7 +46,7 @@ class TripsViewModel(private val tripDao: TripDao) : ViewModel() {
                                 val distMiles = trip.distanceMeters * 0.000621371f
                                 val distKm = trip.distanceMeters / 1000f
 
-                                writer.write("${trip.name},${trip.startTime},${trip.endTime},${elapsedSec},${distMiles},${distKm},${trip.maxSpeedMph},${trip.avgSpeedMph}\n")
+                                writer.write("${csvEscape(trip.name)},${trip.startTime},${trip.endTime},${elapsedSec},${distMiles},${distKm},${trip.maxSpeedMph},${trip.avgSpeedMph}\n")
                             }
                             ExportType.POINTS -> {
                                 writer.write("timestamp,lat,lng,accuracy_m,speed_mps,raw_mph,smoothed_mph\n")
@@ -61,6 +61,15 @@ class TripsViewModel(private val tripDao: TripDao) : ViewModel() {
             } catch (e: Exception) {
                 e.printStackTrace()
             }
+        }
+    }
+
+    // RFC 4180: quote fields containing commas, quotes, or newlines; double embedded quotes
+    private fun csvEscape(value: String): String {
+        return if (value.any { it == ',' || it == '"' || it == '\n' || it == '\r' }) {
+            "\"" + value.replace("\"", "\"\"") + "\""
+        } else {
+            value
         }
     }
 
