@@ -15,7 +15,7 @@ import androidx.room.PrimaryKey
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indexes = [Index(value = ["tripId"])]
+    indices = [Index(value = ["tripId"])]
 )
 data class TripPointEntity(
     @PrimaryKey(autoGenerate = true)
@@ -27,5 +27,7 @@ data class TripPointEntity(
     val accuracyMeters: Float,
     val speedMps: Float,
     val rawMph: Float,
-    val smoothedMph: Float
+    val smoothedMph: Float,
+    val speedLimitMph: Int? = null
 )
+

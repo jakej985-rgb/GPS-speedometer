@@ -14,7 +14,13 @@ data class AppSettings(
     val backgroundTrackingEnabled: Boolean = true,
     val sampleIntervalMs: Long = 1000L,
     val minDeltaSec: Float = 0.3f,
-    val maxDeltaSec: Float = 10f
+    val maxDeltaSec: Float = 10f,
+    val useMph: Boolean = true,
+    val speedAlertLimit: Float = 80f,
+    val keepScreenOn: Boolean = true,
+    val offlineMode: Boolean = false,
+    val orientationLock: String = "unlocked", // "unlocked", "landscape", "portrait"
+    val darkMode: String = "system" // "system", "light", "dark"
 )
 
 class SettingsRepository(private val dataStore: DataStore<Preferences>) {
@@ -29,6 +35,12 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
         val SAMPLE_INTERVAL = longPreferencesKey("sample_interval")
         val MIN_DELTA_SEC = floatPreferencesKey("min_delta_sec")
         val MAX_DELTA_SEC = floatPreferencesKey("max_delta_sec")
+        val USE_MPH = booleanPreferencesKey("use_mph")
+        val SPEED_ALERT_LIMIT = floatPreferencesKey("speed_alert_limit")
+        val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
+        val OFFLINE_MODE = booleanPreferencesKey("offline_mode")
+        val ORIENTATION_LOCK = stringPreferencesKey("orientation_lock")
+        val DARK_MODE = stringPreferencesKey("dark_mode")
     }
 
     val settingsFlow: Flow<AppSettings> = dataStore.data
@@ -42,7 +54,13 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
                 backgroundTrackingEnabled = preferences[PreferencesKeys.BACKGROUND_TRACKING] ?: true,
                 sampleIntervalMs = preferences[PreferencesKeys.SAMPLE_INTERVAL] ?: 1000L,
                 minDeltaSec = preferences[PreferencesKeys.MIN_DELTA_SEC] ?: 0.3f,
-                maxDeltaSec = preferences[PreferencesKeys.MAX_DELTA_SEC] ?: 10f
+                maxDeltaSec = preferences[PreferencesKeys.MAX_DELTA_SEC] ?: 10f,
+                useMph = preferences[PreferencesKeys.USE_MPH] ?: true,
+                speedAlertLimit = preferences[PreferencesKeys.SPEED_ALERT_LIMIT] ?: 80f,
+                keepScreenOn = preferences[PreferencesKeys.KEEP_SCREEN_ON] ?: true,
+                offlineMode = preferences[PreferencesKeys.OFFLINE_MODE] ?: false,
+                orientationLock = preferences[PreferencesKeys.ORIENTATION_LOCK] ?: "unlocked",
+                darkMode = preferences[PreferencesKeys.DARK_MODE] ?: "system"
             )
         }
 
@@ -80,6 +98,30 @@ class SettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun updateMaxDeltaSec(value: Float) {
         dataStore.edit { it[PreferencesKeys.MAX_DELTA_SEC] = value }
+    }
+
+    suspend fun updateUseMph(value: Boolean) {
+        dataStore.edit { it[PreferencesKeys.USE_MPH] = value }
+    }
+
+    suspend fun updateSpeedAlertLimit(value: Float) {
+        dataStore.edit { it[PreferencesKeys.SPEED_ALERT_LIMIT] = value }
+    }
+
+    suspend fun updateKeepScreenOn(enabled: Boolean) {
+        dataStore.edit { it[PreferencesKeys.KEEP_SCREEN_ON] = enabled }
+    }
+
+    suspend fun updateOfflineMode(enabled: Boolean) {
+        dataStore.edit { it[PreferencesKeys.OFFLINE_MODE] = enabled }
+    }
+
+    suspend fun updateOrientationLock(value: String) {
+        dataStore.edit { it[PreferencesKeys.ORIENTATION_LOCK] = value }
+    }
+
+    suspend fun updateDarkMode(value: String) {
+        dataStore.edit { it[PreferencesKeys.DARK_MODE] = value }
     }
 
     suspend fun resetToDefaults() {

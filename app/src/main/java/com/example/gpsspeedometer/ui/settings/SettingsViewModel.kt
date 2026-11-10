@@ -50,8 +50,63 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
         viewModelScope.launch { repository.updateMaxDeltaSec(value) }
     }
 
+    fun updateUseMph(value: Boolean) {
+        viewModelScope.launch { repository.updateUseMph(value) }
+    }
+
+    fun updateSpeedAlertLimit(value: Float) {
+        viewModelScope.launch { repository.updateSpeedAlertLimit(value) }
+    }
+
+    fun updateKeepScreenOn(enabled: Boolean) {
+        viewModelScope.launch { repository.updateKeepScreenOn(enabled) }
+    }
+
+    fun updateOfflineMode(enabled: Boolean) {
+        viewModelScope.launch { repository.updateOfflineMode(enabled) }
+    }
+
+    fun updateOrientationLock(value: String) {
+        viewModelScope.launch { repository.updateOrientationLock(value) }
+    }
+
+    fun updateDarkMode(value: String) {
+        viewModelScope.launch { repository.updateDarkMode(value) }
+    }
+
     fun resetToDefaults() {
         viewModelScope.launch { repository.resetToDefaults() }
+    }
+
+    fun applyPreset(preset: GpsPreset) {
+        viewModelScope.launch {
+            when (preset) {
+                GpsPreset.BALANCED -> {
+                    repository.updateSampleInterval(1000L)
+                    repository.updateEmaAlpha(0.25f)
+                    repository.updateAccuracyThreshold(25f)
+                    repository.updateMinSegmentMeters(3f)
+                    repository.updateMinDeltaSec(0.3f)
+                    repository.updateMaxDeltaSec(10f)
+                }
+                GpsPreset.HIGH_PRECISION -> {
+                    repository.updateSampleInterval(500L)
+                    repository.updateEmaAlpha(0.40f)
+                    repository.updateAccuracyThreshold(15f)
+                    repository.updateMinSegmentMeters(1.5f)
+                    repository.updateMinDeltaSec(0.2f)
+                    repository.updateMaxDeltaSec(5f)
+                }
+                GpsPreset.BATTERY_SAVER -> {
+                    repository.updateSampleInterval(2000L)
+                    repository.updateEmaAlpha(0.20f)
+                    repository.updateAccuracyThreshold(35f)
+                    repository.updateMinSegmentMeters(5f)
+                    repository.updateMinDeltaSec(0.5f)
+                    repository.updateMaxDeltaSec(15f)
+                }
+            }
+        }
     }
 
     class Factory(private val repository: SettingsRepository) : ViewModelProvider.Factory {
@@ -63,4 +118,10 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
             throw IllegalArgumentException("Unknown ViewModel class")
         }
     }
+}
+
+enum class GpsPreset {
+    BALANCED,
+    HIGH_PRECISION,
+    BATTERY_SAVER
 }

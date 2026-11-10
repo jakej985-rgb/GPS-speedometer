@@ -7,6 +7,7 @@ import com.example.gpsspeedometer.data.AppDatabase
 import com.example.gpsspeedometer.data.SettingsRepository
 import com.example.gpsspeedometer.location.LocationRepository
 import com.example.gpsspeedometer.logic.TripManager
+import com.example.gpsspeedometer.speedlimit.SpeedLimitRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,6 +18,8 @@ class AppContainer(private val context: Context) {
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(context, AppDatabase::class.java, "gps_speedometer.db")
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+            .fallbackToDestructiveMigration()
             .build()
     }
 
@@ -28,6 +31,10 @@ class AppContainer(private val context: Context) {
         LocationRepository(context)
     }
 
+    val speedLimitRepository: SpeedLimitRepository by lazy {
+        SpeedLimitRepository(offlineSpeedDao = database.offlineSpeedDao())
+    }
+
     // Application scope for TripManager
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -35,7 +42,8 @@ class AppContainer(private val context: Context) {
         TripManager(
             settingsRepository = settingsRepository,
             tripDao = database.tripDao(),
-            scope = appScope
+            scope = appScope,
+            speedLimitRepository = speedLimitRepository
         )
     }
 }

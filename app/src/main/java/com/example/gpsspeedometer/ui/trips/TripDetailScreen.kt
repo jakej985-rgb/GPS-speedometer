@@ -2,26 +2,39 @@ package com.example.gpsspeedometer.ui.trips
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,21 +44,56 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.gpsspeedometer.data.TripEntity
 import com.example.gpsspeedometer.ui.components.InfoChip
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TripDetailScreen(
     tripId: Long,
     viewModel: TripsViewModel,
+    onViewMap: (Long) -> Unit = {},
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val settings by viewModel.settings.collectAsState()
     var trip by remember { mutableStateOf<TripEntity?>(null) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Delete Trip?") },
+            text = { Text("Are you sure you want to delete this trip? This action cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        trip?.let {
+                            viewModel.deleteTrip(it)
+                            showDeleteDialog = false
+                            onBack()
+                        }
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     LaunchedEffect(tripId) {
         trip = viewModel.getTrip(tripId)
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.exportEvent.collect { message ->
+            snackbarHostState.showSnackbar(message)
+        }
     }
 
     val exportSummaryLauncher = rememberLauncherForActivityResult(
@@ -62,22 +110,32 @@ fun TripDetailScreen(
         }
     )
 
+    val exportGpxLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/gpx+xml"),
+        onResult = { uri ->
+            uri?.let { viewModel.exportTrip(context, tripId, it, ExportType.GPX) }
+        }
+    )
+
+    val exportDiagnosticLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv"),
+        onResult = { uri ->
+            uri?.let { viewModel.exportDiagnosticLog(context, it) }
+        }
+    )
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(trip?.name ?: "Trip Details") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        trip?.let {
-                            viewModel.deleteTrip(it)
-                            onBack()
-                        }
-                    }) {
+                    IconButton(onClick = { showDeleteDialog = true }) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete")
                     }
                 }
@@ -91,20 +149,24 @@ fun TripDetailScreen(
                 .padding(16.dp)
         ) {
             trip?.let { t ->
-                Text("Stats", style = MaterialTheme.typography.titleLarge)
-                Spacer(modifier = Modifier.height(8.dp))
+                Text("Trip Stats", style = MaterialTheme.typography.titleLarge)
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Using standard Row/Column if FlowRow is issue, but trying FlowRow logic manually
-                // Since I don't want to rely on Accompanist which I didn't add to gradle.
-                // Wait, I didn't add accompanist. I used ExperimentalLayoutApi FlowRow in Main.
-                // I will use Column for simplicity or the same FlowRow from foundation if available.
-                // I'll stick to simple Column with Rows.
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start,
+                    maxItemsInEachRow = 3
+                ) {
+                    if (settings.useMph) {
+                        InfoChip(label = "Distance", value = String.format("%.2f mi", t.distanceMeters * 0.000621371f))
+                        InfoChip(label = "Max Speed", value = String.format("%.1f MPH", t.maxSpeedMph))
+                        InfoChip(label = "Avg Speed", value = String.format("%.1f MPH", t.avgSpeedMph))
+                    } else {
+                        InfoChip(label = "Distance", value = String.format("%.2f km", t.distanceMeters / 1000f))
+                        InfoChip(label = "Max Speed", value = String.format("%.1f KM/H", t.maxSpeedMph * 1.60934f))
+                        InfoChip(label = "Avg Speed", value = String.format("%.1f KM/H", t.avgSpeedMph * 1.60934f))
+                    }
 
-                Row {
-                   InfoChip(label = "Distance", value = String.format("%.2f mi", t.distanceMeters * 0.000621371f))
-                   InfoChip(label = "Max Speed", value = String.format("%.1f MPH", t.maxSpeedMph))
-                }
-                Row {
                     val elapsedSec = t.elapsedMs / 1000
                     val h = elapsedSec / 3600
                     val m = (elapsedSec % 3600) / 60
@@ -113,7 +175,27 @@ fun TripDetailScreen(
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
-                Text("Export", style = MaterialTheme.typography.titleLarge)
+
+                FilledTonalButton(
+                    onClick = { onViewMap(t.id) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Map, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("View Route on Map")
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Text("Export Data", style = MaterialTheme.typography.titleLarge)
+                Spacer(modifier = Modifier.height(12.dp))
+
+                FilledTonalButton(
+                    onClick = { exportGpxLauncher.launch("${t.name.replace(" ", "_")}.gpx") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Export GPX (Strava / Earth / Garmin)")
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Button(
@@ -130,6 +212,15 @@ fun TripDetailScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Export Points CSV")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = { exportDiagnosticLauncher.launch("speed_diagnostics.csv") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Export Speed Diagnostic Log (.csv)")
                 }
             }
         }
