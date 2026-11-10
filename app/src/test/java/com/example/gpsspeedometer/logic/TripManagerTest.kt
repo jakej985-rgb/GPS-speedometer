@@ -30,6 +30,7 @@ class TripManagerTest {
     private lateinit var settingsRepository: SettingsRepository
     private lateinit var tripDao: TripDao
     private val testScope = TestScope(UnconfinedTestDispatcher())
+    private var fakeNow = 1_000_000L
 
     @Before
     fun setup() {
@@ -45,7 +46,7 @@ class TripManagerTest {
         ))
         whenever(settingsRepository.settingsFlow).thenReturn(settingsFlow)
 
-        tripManager = TripManager(settingsRepository, tripDao, testScope.backgroundScope)
+        tripManager = TripManager(settingsRepository, tripDao, testScope.backgroundScope, clock = { fakeNow })
     }
 
     @Test
@@ -253,6 +254,7 @@ class TripManagerTest {
             // 3. Movement resumes: 15 meters in 1 second
             simulatedDist = 15f
             val locMoving = LocationSample(21000, 37.7701, -122.42, 15f, 5f, 0f)
+            fakeNow += 21_000L
             tripManager.processLocation(locMoving)
 
             // Verify distance accumulation succeeded and did NOT deadlock

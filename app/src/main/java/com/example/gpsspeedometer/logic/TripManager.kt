@@ -28,7 +28,8 @@ class TripManager(
     private val settingsRepository: SettingsRepository,
     private val tripDao: TripDao,
     private val scope: CoroutineScope,
-    private val speedLimitRepository: SpeedLimitRepository? = null
+    private val speedLimitRepository: SpeedLimitRepository? = null,
+    private val clock: () -> Long = { SystemClock.elapsedRealtime() }
 ) {
 
     private val _tripState = MutableStateFlow(TripStats())
@@ -79,7 +80,7 @@ class TripManager(
 
         // Wall clock for the calendar start; monotonic clock for elapsed-time math
         val now = System.currentTimeMillis()
-        tripStartTime = SystemClock.elapsedRealtime()
+        tripStartTime = clock()
         totalPausedDurationMs = 0L
         lastPauseTimestamp = 0L
         lastValidLocation = null
@@ -126,14 +127,14 @@ class TripManager(
 
     fun pauseTrip() {
         if (!_tripState.value.isRecording || _tripState.value.isPaused) return
-        lastPauseTimestamp = SystemClock.elapsedRealtime()
+        lastPauseTimestamp = clock()
         _tripState.update { it.copy(isPaused = true) }
     }
 
     fun resumeTrip() {
         if (!_tripState.value.isRecording || !_tripState.value.isPaused) return
         if (lastPauseTimestamp > 0L) {
-            totalPausedDurationMs += (SystemClock.elapsedRealtime() - lastPauseTimestamp)
+            totalPausedDurationMs += (clock() - lastPauseTimestamp)
             lastPauseTimestamp = 0L
         }
         _tripState.update { it.copy(isPaused = false) }
@@ -158,7 +159,7 @@ class TripManager(
         if (!_tripState.value.isRecording) return
 
         val now = System.currentTimeMillis()
-        val nowMono = SystemClock.elapsedRealtime()
+        val nowMono = clock()
         if (_tripState.value.isPaused && lastPauseTimestamp > 0L) {
             totalPausedDurationMs += (nowMono - lastPauseTimestamp)
             lastPauseTimestamp = 0L
@@ -262,7 +263,7 @@ class TripManager(
 
         // Elapsed time uses a monotonic clock (immune to device clock changes) with pauses excluded
         val currentElapsed = if (tripStartTime > 0L) {
-            max(0L, SystemClock.elapsedRealtime() - tripStartTime - totalPausedDurationMs)
+            max(0L, clock() - tripStartTime - totalPausedDurationMs)
         } else {
             _tripState.value.elapsedMs
         }
