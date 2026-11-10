@@ -84,7 +84,8 @@ fun TripsScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            items(trips) { trip ->
+            // Provide stable key to prevent unnecessary item recompositions & re-allocations on list mutations
+            items(trips, key = { it.id }) { trip ->
                 TripItem(
                     trip = trip,
                     useMph = settings.useMph,
@@ -101,17 +102,21 @@ fun TripItem(
     useMph: Boolean,
     onClick: () -> Unit
 ) {
-    val dateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
-    val dateStr = dateFormat.format(Date(trip.startTime))
-    val distStr = if (useMph) {
-        String.format("%.2f mi", trip.distanceMeters * 0.000621371f)
-    } else {
-        String.format("%.2f km", trip.distanceMeters / 1000f)
-    }
-    val maxSpeedStr = if (useMph) {
-        String.format("Max: %.1f MPH", trip.maxSpeedMph)
-    } else {
-        String.format("Max: %.1f KM/H", trip.maxSpeedMph * 1.60934f)
+    // Cache SimpleDateFormat and formatted strings to avoid expensive object allocations and formatting on recomposition
+    val (dateStr, distStr, maxSpeedStr) = remember(trip, useMph) {
+        val dateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
+        val date = dateFormat.format(Date(trip.startTime))
+        val dist = if (useMph) {
+            String.format("%.2f mi", trip.distanceMeters * 0.000621371f)
+        } else {
+            String.format("%.2f km", trip.distanceMeters / 1000f)
+        }
+        val maxSpeed = if (useMph) {
+            String.format("Max: %.1f MPH", trip.maxSpeedMph)
+        } else {
+            String.format("Max: %.1f KM/H", trip.maxSpeedMph * 1.60934f)
+        }
+        Triple(date, dist, maxSpeed)
     }
 
     Card(
