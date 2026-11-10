@@ -1,6 +1,7 @@
 package com.example.gpsspeedometer.logic
 
 import android.location.Location
+import android.util.Log
 import com.example.gpsspeedometer.data.AppSettings
 import com.example.gpsspeedometer.data.SettingsRepository
 import com.example.gpsspeedometer.data.TripDao
@@ -8,9 +9,8 @@ import com.example.gpsspeedometer.data.TripEntity
 import com.example.gpsspeedometer.data.TripPointEntity
 import com.example.gpsspeedometer.domain.LocationSample
 import com.example.gpsspeedometer.domain.TripStats
+import com.example.gpsspeedometer.speedlimit.SpeedLimitRepository
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,7 +26,8 @@ import kotlin.math.max
 class TripManager(
     private val settingsRepository: SettingsRepository,
     private val tripDao: TripDao,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val speedLimitRepository: SpeedLimitRepository? = null
 ) {
 
     private val _tripState = MutableStateFlow(TripStats())
@@ -35,9 +36,22 @@ class TripManager(
     private val _speedHistory = MutableStateFlow<List<Pair<Long, Float>>>(emptyList())
     val speedHistory: StateFlow<List<Pair<Long, Float>>> = _speedHistory.asStateFlow()
 
+    // Bolt optimization: Persistent ArrayDeque ring buffer to avoid allocating a new ArrayList
+    // and performing O(N) array shifts with removeAt(0) on every location tick.
+    private val speedHistoryDeque = ArrayDeque<Pair<Long, Float>>()
+
+    @Volatile
     private var currentTripId: Long? = null
     private var lastValidLocation: LocationSample? = null
     private var lastSmoothedSpeedMph: Float = 0f
+
+    // Wall-clock & location time tracking for accurate elapsed time accounting (including pauses)
+    private var tripStartTime: Long = 0L
+    private var firstLocationTimestamp: Long = 0L
+    private var totalPausedDurationMs: Long = 0L
+    private var lastPauseTimestamp: Long = 0L
+
+    private val historyLock = Any()
 
     // Settings
     private var settings: AppSettings = AppSettings()
@@ -46,41 +60,81 @@ class TripManager(
         settingsRepository.settingsFlow
             .onEach { settings = it }
             .launchIn(scope)
+
+        // Observe speed limit changes and reflect in trip state
+        speedLimitRepository?.speedLimitFlow
+            ?.onEach { limitInfo ->
+                _tripState.update {
+                    it.copy(
+                        speedLimitMph = limitInfo.speedLimitMph,
+                        roadName = limitInfo.roadName
+                    )
+                }
+            }
+            ?.launchIn(scope)
     }
 
     fun startTrip() {
         if (_tripState.value.isRecording) return
 
-        scope.launch {
-            val startTime = System.currentTimeMillis()
-            val dateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
-            val dateStr = dateFormat.format(Date(startTime))
-            val tripName = "Trip - $dateStr"
-
-            val trip = TripEntity(
-                name = tripName,
-                startTime = startTime,
-                endTime = 0,
-                elapsedMs = 0,
-                distanceMeters = 0f,
-                maxSpeedMph = 0f,
-                avgSpeedMph = 0f
-            )
-            currentTripId = tripDao.insertTrip(trip)
-            _tripState.update { it.copy(isRecording = true, isPaused = false, elapsedMs = 0, distanceMeters = 0f, maxSpeedMph = 0f) }
-
-            // Reset state
-            lastValidLocation = null
-            lastSmoothedSpeedMph = 0f
+        val now = System.currentTimeMillis()
+        tripStartTime = now
+        firstLocationTimestamp = 0L
+        totalPausedDurationMs = 0L
+        lastPauseTimestamp = 0L
+        lastValidLocation = null
+        lastSmoothedSpeedMph = 0f
+        synchronized(historyLock) {
+            speedHistoryDeque.clear()
             _speedHistory.value = emptyList()
+        }
+
+        // Comma-free (CSV-safe) and second-precision so back-to-back trips are distinguishable
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val tripName = "Trip - ${dateFormat.format(Date(now))}"
+
+        scope.launch {
+            try {
+                val trip = TripEntity(
+                    name = tripName,
+                    startTime = now,
+                    endTime = 0,
+                    elapsedMs = 0,
+                    distanceMeters = 0f,
+                    maxSpeedMph = 0f,
+                    avgSpeedMph = 0f
+                )
+                val id = tripDao.insertTrip(trip)
+                currentTripId = id
+                _tripState.update {
+                    it.copy(
+                        isRecording = true,
+                        isPaused = false,
+                        elapsedMs = 0,
+                        distanceMeters = 0f,
+                        maxSpeedMph = 0f,
+                        avgSpeedMph = 0f,
+                        avgSpeedKmh = 0f
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("TripManager", "Error inserting trip to database", e)
+            }
         }
     }
 
     fun pauseTrip() {
+        if (!_tripState.value.isRecording || _tripState.value.isPaused) return
+        lastPauseTimestamp = System.currentTimeMillis()
         _tripState.update { it.copy(isPaused = true) }
     }
 
     fun resumeTrip() {
+        if (!_tripState.value.isRecording || !_tripState.value.isPaused) return
+        if (lastPauseTimestamp > 0L) {
+            totalPausedDurationMs += (System.currentTimeMillis() - lastPauseTimestamp)
+            lastPauseTimestamp = 0L
+        }
         _tripState.update { it.copy(isPaused = false) }
         lastValidLocation = null // Reset last location to avoid huge jumps/segments after pause
     }
@@ -88,9 +142,13 @@ class TripManager(
     fun updateCurrentTripName(name: String) {
         val tripId = currentTripId ?: return
         scope.launch {
-            val trip = tripDao.getTripById(tripId)
-            if (trip != null) {
-                tripDao.updateTrip(trip.copy(name = name))
+            try {
+                val trip = tripDao.getTripById(tripId)
+                if (trip != null) {
+                    tripDao.updateTrip(trip.copy(name = name))
+                }
+            } catch (e: Exception) {
+                Log.e("TripManager", "Error updating trip name", e)
             }
         }
     }
@@ -98,127 +156,199 @@ class TripManager(
     fun stopTrip() {
         if (!_tripState.value.isRecording) return
 
-        val finalState = _tripState.value
-        val tripId = currentTripId
-
-        scope.launch {
-            if (tripId != null) {
-                val trip = tripDao.getTripById(tripId)
-                if (trip != null) {
-                    val updatedTrip = trip.copy(
-                        endTime = System.currentTimeMillis(),
-                        elapsedMs = finalState.elapsedMs,
-                        distanceMeters = finalState.distanceMeters,
-                        maxSpeedMph = finalState.maxSpeedMph,
-                        avgSpeedMph = 0f // Calculate proper average later if needed
-                    )
-                    tripDao.updateTrip(updatedTrip)
-                }
-            }
+        val now = System.currentTimeMillis()
+        if (_tripState.value.isPaused && lastPauseTimestamp > 0L) {
+            totalPausedDurationMs += (now - lastPauseTimestamp)
+            lastPauseTimestamp = 0L
+        }
+        val finalElapsedMs = if (tripStartTime > 0L) {
+            max(0L, now - tripStartTime - totalPausedDurationMs)
+        } else {
+            _tripState.value.elapsedMs
         }
 
-        _tripState.update { it.copy(isRecording = false, isPaused = false) }
+        val finalState = _tripState.value.copy(elapsedMs = finalElapsedMs)
+        val tripId = currentTripId
+
+        // Calculate proper average speed: distance in miles / elapsed hours
+        val elapsedHours = finalElapsedMs / 3600000f
+        val distanceMiles = finalState.distanceMeters * 0.000621371f
+        val calculatedAvgMph = if (elapsedHours > 0.0001f) (distanceMiles / elapsedHours) else 0f
+        val calculatedAvgKmh = calculatedAvgMph * 1.609344f
+        _tripState.update {
+            it.copy(
+                isRecording = false,
+                isPaused = false,
+                elapsedMs = finalElapsedMs,
+                avgSpeedMph = calculatedAvgMph,
+                avgSpeedKmh = calculatedAvgKmh
+            )
+        }
         currentTripId = null
+        tripStartTime = 0L
+        firstLocationTimestamp = 0L
+        totalPausedDurationMs = 0L
+
+        scope.launch {
+            try {
+                if (tripId != null) {
+                    val trip = tripDao.getTripById(tripId)
+                    if (trip != null) {
+                        val updatedTrip = trip.copy(
+                            endTime = now,
+                            elapsedMs = finalElapsedMs,
+                            distanceMeters = finalState.distanceMeters,
+                            maxSpeedMph = finalState.maxSpeedMph,
+                            avgSpeedMph = calculatedAvgMph
+                        )
+                        tripDao.updateTrip(updatedTrip)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("TripManager", "Error updating trip on stop", e)
+            }
+        }
     }
 
     fun processLocation(location: LocationSample) {
         // Always update current speed/accuracy for display (Live Speed)
-        // Convert speed from m/s to mph
         val rawMph = location.speedMps * 2.23694f
         val smoothedMph = calculateSmoothedSpeed(rawMph)
 
         // Update history (Ring buffer)
         updateHistory(location.timestamp, smoothedMph)
 
-        if (!_tripState.value.isRecording || _tripState.value.isPaused) {
-            // just update live view stats
+        // Asynchronously query road speed limit on valid coordinates
+        if (location.lat != 0.0 && location.lng != 0.0) {
+            scope.launch {
+                try {
+                    speedLimitRepository?.queryIfNeeded(
+                        lat = location.lat,
+                        lng = location.lng,
+                        useMph = settings.useMph,
+                        offlineMode = settings.offlineMode,
+                        currentSpeedMph = tripState.value.currentSpeedMph
+                    )
+                } catch (e: Exception) {
+                    Log.e("TripManager", "Error querying speed limit in processLocation", e)
+                }
+            }
+        }
+
+        val currentSpeedLimit = speedLimitRepository?.speedLimitFlow?.value
+        val isRecording = _tripState.value.isRecording
+        val isPaused = _tripState.value.isPaused
+
+        if (!isRecording || isPaused) {
+            // Live view stats only
             _tripState.update {
                 it.copy(
                     currentSpeedMph = smoothedMph,
                     currentSpeedKmh = location.speedMps * 3.6f,
                     accuracyMeters = location.accuracyMeters,
-                    lastLocationTimestamp = location.timestamp
+                    lastLocationTimestamp = location.timestamp,
+                    currentLat = location.lat,
+                    currentLng = location.lng,
+                    bearing = location.bearing,
+                    speedLimitMph = currentSpeedLimit?.speedLimitMph ?: it.speedLimitMph,
+                    roadName = currentSpeedLimit?.roadName ?: it.roadName
                 )
             }
             return
         }
 
-        // Filtering logic for distance/accumulation
-        if (isValidForAccumulation(location)) {
-            val dist = if (lastValidLocation != null) {
-                val results = FloatArray(1)
-                Location.distanceBetween(
-                    lastValidLocation!!.lat, lastValidLocation!!.lng,
-                    location.lat, location.lng,
-                    results
-                )
-                results[0]
-            } else {
-                0f
-            }
+        // Always track max speed on accurate GPS samples
+        val isAccurate = location.accuracyMeters <= settings.accuracyThresholdMeters
+        val newMaxSpeed = if (isAccurate) max(_tripState.value.maxSpeedMph, smoothedMph) else _tripState.value.maxSpeedMph
 
-            // Additional sanity check on distance/speed
-            // If distance implies speed > maxPlausible, ignore
-            val timeDeltaSec = if (lastValidLocation != null) (location.timestamp - lastValidLocation!!.timestamp) / 1000f else 0f
-            val impliedSpeedMps = if (timeDeltaSec > 0) dist / timeDeltaSec else 0f
-            val impliedMph = impliedSpeedMps * 2.23694f
-
-            if (timeDeltaSec > 0 && impliedMph > settings.maxPlausibleMph && location.accuracyMeters > 10) {
-                // Ignore as outlier unless accuracy is very high
-            } else {
-                // Accumulate
-                val newDistance = _tripState.value.distanceMeters + dist
-                val newMaxSpeed = max(_tripState.value.maxSpeedMph, smoothedMph)
-
-                // Update elapsed time properly
-                // Simple approach: current time - start time - pause duration.
-                // Or accumulate elapsed time. Here we just take delta from start if not complex.
-                // But for robust implementation with pauses, we should accumulate time.
-                // Since I don't track pause duration perfectly here, I'll rely on delta.
-                // For now, let's assume elapsed is updated by a timer or simple delta accumulation?
-                // Actually, `elapsedMs` in state is usually strictly "time moving" or "total duration"?
-                // Let's stick to "Duration since start" minus "Pause duration".
-                // I'll leave elapsed calculation to the UI or a separate ticker, OR accumulate deltas here.
-                // Let's accumulate deltas between locations for "Moving Time"?
-                // The prompt says "elapsed time" while running.
-                // I will update elapsed time relative to start time in `TripStats` update via a separate ticker or just delta.
-                // Let's rely on simple (now - start) - pauseOffsets.
-                // But simpler: just add timeDelta if valid.
-
-                val currentElapsed = _tripState.value.elapsedMs + (timeDeltaSec * 1000).toLong()
-
-                _tripState.update {
-                    it.copy(
-                        distanceMeters = newDistance,
-                        maxSpeedMph = newMaxSpeed,
-                        currentSpeedMph = smoothedMph,
-                        currentSpeedKmh = location.speedMps * 3.6f,
-                        accuracyMeters = location.accuracyMeters,
-                        elapsedMs = currentElapsed,
-                        lastLocationTimestamp = location.timestamp
-                    )
-                }
-
-                // Persist Point
-                persistPoint(location, rawMph, smoothedMph)
-
-                lastValidLocation = location
-            }
+        // Calculate elapsed time (supporting wall-clock and location timestamps)
+        if (firstLocationTimestamp == 0L && location.timestamp > 0L) {
+            firstLocationTimestamp = location.timestamp
+        }
+        val wallClockElapsed = if (tripStartTime > 0L) {
+            max(0L, System.currentTimeMillis() - tripStartTime - totalPausedDurationMs)
         } else {
-             // Just update speed display
-             _tripState.update {
-                it.copy(
-                    currentSpeedMph = smoothedMph,
-                    currentSpeedKmh = location.speedMps * 3.6f,
-                    accuracyMeters = location.accuracyMeters,
-                    lastLocationTimestamp = location.timestamp
-                )
-             }
+            _tripState.value.elapsedMs
+        }
+        val locationElapsed = if (firstLocationTimestamp > 0L && location.timestamp >= firstLocationTimestamp) {
+            max(0L, location.timestamp - firstLocationTimestamp)
+        } else {
+            0L
+        }
+        val currentElapsed = max(wallClockElapsed, locationElapsed)
+
+        var newDistance = _tripState.value.distanceMeters
+        var shouldPersistPoint = false
+
+        if (isAccurate) {
+            if (lastValidLocation == null) {
+                lastValidLocation = location
+                shouldPersistPoint = true
+            } else {
+                val deltaSec = (location.timestamp - lastValidLocation!!.timestamp) / 1000f
+
+                if (deltaSec >= settings.minDeltaSec) {
+                    if (deltaSec > settings.maxDeltaSec) {
+                        // Large time gap (e.g. stopped for a while, GPS temporarily lost, or service restart):
+                        // Advance lastValidLocation to resume tracking without adding an artificial leap distance
+                        lastValidLocation = location
+                        shouldPersistPoint = true
+                    } else {
+                        // Normal sequential update
+                        val results = FloatArray(1)
+                        Location.distanceBetween(
+                            lastValidLocation!!.lat, lastValidLocation!!.lng,
+                            location.lat, location.lng,
+                            results
+                        )
+                        val dist = results[0]
+
+                        // Spike plausibility check
+                        val impliedMph = if (deltaSec > 0) (dist / deltaSec) * 2.23694f else 0f
+                        if (impliedMph <= settings.maxPlausibleMph) {
+                            if (dist >= settings.minSegmentMeters) {
+                                newDistance += dist
+                                shouldPersistPoint = true
+                            }
+                            // Keep lastValidLocation fresh (even if stationary < minSegmentMeters)
+                            // to prevent deltaSec from building up beyond maxDeltaSec and deadlocking
+                            lastValidLocation = location
+                        }
+                    }
+                }
+            }
+        }
+
+        val elapsedHours = currentElapsed / 3600000f
+        val distanceMiles = newDistance * 0.000621371f
+        val liveAvgMph = if (elapsedHours > 0.0001f) (distanceMiles / elapsedHours) else 0f
+        val liveAvgKmh = liveAvgMph * 1.609344f
+
+        _tripState.update {
+            it.copy(
+                distanceMeters = newDistance,
+                maxSpeedMph = newMaxSpeed,
+                avgSpeedMph = liveAvgMph,
+                avgSpeedKmh = liveAvgKmh,
+                currentSpeedMph = smoothedMph,
+                currentSpeedKmh = location.speedMps * 3.6f,
+                accuracyMeters = location.accuracyMeters,
+                elapsedMs = currentElapsed,
+                lastLocationTimestamp = location.timestamp,
+                currentLat = location.lat,
+                currentLng = location.lng,
+                bearing = location.bearing,
+                speedLimitMph = currentSpeedLimit?.speedLimitMph ?: it.speedLimitMph,
+                roadName = currentSpeedLimit?.roadName ?: it.roadName
+            )
+        }
+
+        if (shouldPersistPoint) {
+            persistPoint(location, rawMph, smoothedMph, currentSpeedLimit?.speedLimitMph)
         }
     }
 
     private fun calculateSmoothedSpeed(rawMph: Float): Float {
-        // EMA
         val alpha = settings.emaAlpha
         lastSmoothedSpeedMph = alpha * rawMph + (1 - alpha) * lastSmoothedSpeedMph
         // If speed is very low, snap to 0 to avoid drift
@@ -226,55 +356,43 @@ class TripManager(
         return lastSmoothedSpeedMph
     }
 
-    private fun isValidForAccumulation(location: LocationSample): Boolean {
-        // Accuracy check
-        if (location.accuracyMeters > settings.accuracyThresholdMeters) return false
-
-        // Time Delta check
-        if (lastValidLocation != null) {
-            val deltaSec = (location.timestamp - lastValidLocation!!.timestamp) / 1000f
-            if (deltaSec < settings.minDeltaSec || deltaSec > settings.maxDeltaSec) return false
-        }
-
-        // Min Segment check
-        if (lastValidLocation != null) {
-            val results = FloatArray(1)
-            Location.distanceBetween(
-                lastValidLocation!!.lat, lastValidLocation!!.lng,
-                location.lat, location.lng,
-                results
-            )
-            if (results[0] < settings.minSegmentMeters) return false
-        }
-
-        return true
-    }
-
     private fun updateHistory(timestamp: Long, mph: Float) {
-        val currentList = _speedHistory.value.toMutableList()
-        currentList.add(timestamp to mph)
-        // Keep window size
-        if (currentList.size > settings.historyWindowSamples) {
-            currentList.removeAt(0)
+        synchronized(historyLock) {
+            // Bolt optimization: ArrayDeque provides O(1) appending and O(1) front eviction (removeFirst).
+            // Previously, toMutableList() + removeAt(0) caused O(N) element shifts on every GPS update.
+            speedHistoryDeque.addLast(timestamp to mph)
+            while (speedHistoryDeque.size > settings.historyWindowSamples && speedHistoryDeque.isNotEmpty()) {
+                speedHistoryDeque.removeFirst()
+            }
+            _speedHistory.value = speedHistoryDeque.toList()
         }
-        _speedHistory.value = currentList
     }
 
-    private fun persistPoint(location: LocationSample, rawMph: Float, smoothedMph: Float) {
+    private fun persistPoint(
+        location: LocationSample,
+        rawMph: Float,
+        smoothedMph: Float,
+        speedLimitMph: Int?
+    ) {
         val tripId = currentTripId ?: return
         scope.launch {
-            tripDao.insertTripPoint(
-                TripPointEntity(
-                    tripId = tripId,
-                    timestamp = location.timestamp,
-                    lat = location.lat,
-                    lng = location.lng,
-                    accuracyMeters = location.accuracyMeters,
-                    speedMps = location.speedMps,
-                    rawMph = rawMph,
-                    smoothedMph = smoothedMph
+            try {
+                tripDao.insertTripPoint(
+                    TripPointEntity(
+                        tripId = tripId,
+                        timestamp = location.timestamp,
+                        lat = location.lat,
+                        lng = location.lng,
+                        accuracyMeters = location.accuracyMeters,
+                        speedMps = location.speedMps,
+                        rawMph = rawMph,
+                        smoothedMph = smoothedMph,
+                        speedLimitMph = speedLimitMph
+                    )
                 )
-            )
+            } catch (e: Exception) {
+                Log.e("TripManager", "Error inserting trip point", e)
+            }
         }
     }
 }
