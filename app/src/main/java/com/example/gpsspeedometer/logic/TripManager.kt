@@ -297,10 +297,15 @@ class TripManager(
                         // Spike plausibility check
                         val impliedMph = if (deltaSec > 0) (dist / deltaSec) * 2.23694f else 0f
                         if (impliedMph <= settings.maxPlausibleMph) {
-                            // Use the GPS-reported speed as motion evidence: when stationary, keep the
-                            // anchor fresh so drift never accumulates; when moving, hold the anchor until
-                            // the segment reaches minSegmentMeters so slow movement adds up.
-                            val isMoving = location.speedMps >= STATIONARY_SPEED_MPS
+                            // Motion evidence: either the GPS reports speed, or the displacement exceeds
+                            // the combined positional uncertainty of both fixes (covers providers that
+                            // report no speed, where speedMps is 0). Drift stays within uncertainty, so
+                            // a stationary device keeps refreshing the anchor and never accumulates.
+                            val uncertainty = max(
+                                settings.minSegmentMeters,
+                                location.accuracyMeters + lastValidLocation!!.accuracyMeters
+                            )
+                            val isMoving = location.speedMps >= STATIONARY_SPEED_MPS || dist > uncertainty
                             if (!isMoving) {
                                 lastValidLocation = location
                             } else if (dist >= settings.minSegmentMeters) {
