@@ -17,6 +17,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -28,6 +30,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,7 +56,35 @@ fun TripDetailScreen(
     val context = LocalContext.current
     val settings by viewModel.settings.collectAsState()
     var trip by remember { mutableStateOf<TripEntity?>(null) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Delete Trip?") },
+            text = { Text("Are you sure you want to delete this trip? This action cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        trip?.let {
+                            viewModel.deleteTrip(it)
+                            showDeleteDialog = false
+                            onBack()
+                        }
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     LaunchedEffect(tripId) {
         trip = viewModel.getTrip(tripId)
@@ -104,12 +135,7 @@ fun TripDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        trip?.let {
-                            viewModel.deleteTrip(it)
-                            onBack()
-                        }
-                    }) {
+                    IconButton(onClick = { showDeleteDialog = true }) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete")
                     }
                 }
