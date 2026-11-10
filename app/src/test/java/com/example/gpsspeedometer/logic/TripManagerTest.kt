@@ -295,4 +295,26 @@ class TripManagerTest {
         assertEquals(45, customTripManager.tripState.value.speedLimitMph)
         assertEquals("Main Street", customTripManager.tripState.value.roadName)
     }
+
+    @Test
+    fun `test speed history ring buffer capacity and eviction`() = testScope.runTest {
+        // historyWindowSamples is configured to 10 in setup()
+        for (i in 1..15) {
+            val loc = LocationSample(
+                timestamp = i * 1000L,
+                lat = 0.0,
+                lng = 0.0,
+                speedMps = i.toFloat(),
+                accuracyMeters = 5f,
+                bearing = 0f
+            )
+            tripManager.processLocation(loc)
+        }
+
+        val history = tripManager.speedHistory.value
+        assertEquals("History should be capped at historyWindowSamples (10)", 10, history.size)
+        // Earliest timestamp should be 6000L and latest 15000L
+        assertEquals(6000L, history.first().first)
+        assertEquals(15000L, history.last().first)
+    }
 }

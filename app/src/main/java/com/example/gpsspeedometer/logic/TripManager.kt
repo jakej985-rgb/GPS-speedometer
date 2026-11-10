@@ -33,6 +33,10 @@ class TripManager(
     private val _speedHistory = MutableStateFlow<List<Pair<Long, Float>>>(emptyList())
     val speedHistory: StateFlow<List<Pair<Long, Float>>> = _speedHistory.asStateFlow()
 
+    // Bolt optimization: Persistent ArrayDeque ring buffer to avoid allocating a new ArrayList
+    // and performing O(N) array shifts with removeAt(0) on every location tick.
+    private val speedHistoryDeque = ArrayDeque<Pair<Long, Float>>()
+
     @Volatile
     private var currentTripId: Long? = null
     private var lastValidLocation: LocationSample? = null
@@ -78,6 +82,7 @@ class TripManager(
         lastValidLocation = null
         lastSmoothedSpeedMph = 0f
         synchronized(historyLock) {
+            speedHistoryDeque.clear()
             _speedHistory.value = emptyList()
         }
 
@@ -346,12 +351,13 @@ class TripManager(
 
     private fun updateHistory(timestamp: Long, mph: Float) {
         synchronized(historyLock) {
-            val currentList = _speedHistory.value.toMutableList()
-            currentList.add(timestamp to mph)
-            while (currentList.size > settings.historyWindowSamples && currentList.isNotEmpty()) {
-                currentList.removeAt(0)
+            // Bolt optimization: ArrayDeque provides O(1) appending and O(1) front eviction (removeFirst).
+            // Previously, toMutableList() + removeAt(0) caused O(N) element shifts on every GPS update.
+            speedHistoryDeque.addLast(timestamp to mph)
+            while (speedHistoryDeque.size > settings.historyWindowSamples && speedHistoryDeque.isNotEmpty()) {
+                speedHistoryDeque.removeFirst()
             }
-            _speedHistory.value = currentList
+            _speedHistory.value = speedHistoryDeque.toList()
         }
     }
 
