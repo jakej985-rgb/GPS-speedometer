@@ -293,10 +293,10 @@ class TripManager(
                 val deltaSec = (location.timestamp - lastValidLocation!!.timestamp) / 1000f
 
                 if (gapSec >= settings.minDeltaSec) {
-                    lastFixTimestamp = location.timestamp
                     if (gapSec > settings.maxDeltaSec) {
                         // Large time gap (e.g. stopped for a while, GPS temporarily lost, or service restart):
                         // Advance lastValidLocation to resume tracking without adding an artificial leap distance
+                        lastFixTimestamp = location.timestamp
                         lastValidLocation = location
                         pendingNoSpeedMotion = false
                         shouldPersistPoint = true
@@ -313,6 +313,9 @@ class TripManager(
                         // Spike plausibility check
                         val impliedMph = if (deltaSec > 0) (dist / deltaSec) * 2.23694f else 0f
                         if (impliedMph <= settings.maxPlausibleMph) {
+                            // Only plausible fixes advance the gap clock; rejected spikes must not
+                            // hide a real tracking gap from the maxDeltaSec reset
+                            lastFixTimestamp = location.timestamp
                             // Motion evidence: either the GPS reports speed, or the displacement exceeds
                             // the combined positional uncertainty of both fixes (covers providers that
                             // report no speed, where speedMps is 0). Drift stays within uncertainty, so
