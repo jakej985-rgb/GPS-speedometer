@@ -47,6 +47,9 @@ class TripManager(
     private var lastValidLocation: LocationSample? = null
     private var lastSmoothedSpeedMph: Float = 0f
     private var pendingNoSpeedMotion: Boolean = false
+    // Timestamp of the most recent accepted fix; separate from the distance anchor so the
+    // gap rule applies to consecutive fixes even while the anchor is held
+    private var lastFixTimestamp: Long = 0L
 
     // Wall-clock & location time tracking for accurate elapsed time accounting (including pauses)
     private var tripStartTime: Long = 0L
@@ -85,6 +88,8 @@ class TripManager(
         totalPausedDurationMs = 0L
         lastPauseTimestamp = 0L
         lastValidLocation = null
+        pendingNoSpeedMotion = false
+        lastFixTimestamp = 0L
         lastSmoothedSpeedMph = 0f
         synchronized(historyLock) {
             speedHistoryDeque.clear()
@@ -140,6 +145,8 @@ class TripManager(
         }
         _tripState.update { it.copy(isPaused = false) }
         lastValidLocation = null // Reset last location to avoid huge jumps/segments after pause
+        pendingNoSpeedMotion = false
+        lastFixTimestamp = 0L
     }
 
     fun updateCurrentTripName(name: String) {
@@ -276,15 +283,22 @@ class TripManager(
         if (isAccurate) {
             if (lastValidLocation == null) {
                 lastValidLocation = location
+                lastFixTimestamp = location.timestamp
+                pendingNoSpeedMotion = false
                 shouldPersistPoint = true
             } else {
+                // Gap rule uses the interval between consecutive fixes; implied speed uses the
+                // anchor interval because distance is measured from the anchor
+                val gapSec = (location.timestamp - lastFixTimestamp) / 1000f
                 val deltaSec = (location.timestamp - lastValidLocation!!.timestamp) / 1000f
 
-                if (deltaSec >= settings.minDeltaSec) {
-                    if (deltaSec > settings.maxDeltaSec) {
+                if (gapSec >= settings.minDeltaSec) {
+                    lastFixTimestamp = location.timestamp
+                    if (gapSec > settings.maxDeltaSec) {
                         // Large time gap (e.g. stopped for a while, GPS temporarily lost, or service restart):
                         // Advance lastValidLocation to resume tracking without adding an artificial leap distance
                         lastValidLocation = location
+                        pendingNoSpeedMotion = false
                         shouldPersistPoint = true
                     } else {
                         // Normal sequential update
