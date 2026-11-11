@@ -31,7 +31,6 @@ class TripManagerTest {
     private lateinit var tripDao: TripDao
     private val testScope = TestScope(UnconfinedTestDispatcher())
     private var fakeNow = 1_000_000L
-    private var fakeNow = 1_000_000L
 
     @Before
     fun setup() {
@@ -255,7 +254,6 @@ class TripManagerTest {
             // 3. Movement resumes: 15 meters in 1 second
             simulatedDist = 15f
             val locMoving = LocationSample(21000, 37.7701, -122.42, 15f, 5f, 0f)
-            fakeNow += 21_000L
             fakeNow += 21_000L
             tripManager.processLocation(locMoving)
 

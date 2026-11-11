@@ -29,7 +29,7 @@ class TripManager(
     private val tripDao: TripDao,
     private val scope: CoroutineScope,
     private val speedLimitRepository: SpeedLimitRepository? = null,
-    private val clock: () -> Long = { clock() }
+    private val clock: () -> Long = { SystemClock.elapsedRealtime() }
 ) {
 
     private val _tripState = MutableStateFlow(TripStats())
@@ -46,6 +46,7 @@ class TripManager(
     private var currentTripId: Long? = null
     private var lastValidLocation: LocationSample? = null
     private var lastSmoothedSpeedMph: Float = 0f
+    private var pendingNoSpeedMotion: Boolean = false
 
     // Wall-clock & location time tracking for accurate elapsed time accounting (including pauses)
     private var tripStartTime: Long = 0L
@@ -306,9 +307,16 @@ class TripManager(
                                 settings.minSegmentMeters,
                                 location.accuracyMeters + lastValidLocation!!.accuracyMeters
                             )
-                            val isMoving = location.speedMps >= STATIONARY_SPEED_MPS || dist > uncertainty
+                            // Without GPS speed, a single jump beyond uncertainty may be noise; require
+                            // two consecutive such fixes before treating displacement as motion.
+                            val hasSpeedEvidence = location.speedMps >= STATIONARY_SPEED_MPS
+                            val beyondUncertainty = dist > uncertainty
+                            val isMoving = hasSpeedEvidence || (beyondUncertainty && pendingNoSpeedMotion)
+                            pendingNoSpeedMotion = !hasSpeedEvidence && beyondUncertainty
                             if (!isMoving) {
-                                lastValidLocation = location
+                                // Stationary: refresh anchor. Pending no-speed jump: hold anchor so the
+                                // next fix is measured from the same point.
+                                if (!pendingNoSpeedMotion) lastValidLocation = location
                             } else if (dist >= settings.minSegmentMeters) {
                                 newDistance += dist
                                 shouldPersistPoint = true
