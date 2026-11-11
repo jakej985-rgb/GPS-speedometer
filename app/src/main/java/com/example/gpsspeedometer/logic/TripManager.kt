@@ -29,7 +29,7 @@ class TripManager(
     private val tripDao: TripDao,
     private val scope: CoroutineScope,
     private val speedLimitRepository: SpeedLimitRepository? = null,
-    private val clock: () -> Long = { SystemClock.elapsedRealtime() }
+    private val clock: () -> Long = { clock() }
 ) {
 
     private val _tripState = MutableStateFlow(TripStats())
