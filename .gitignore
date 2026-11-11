@@ -1,14 +1,7 @@
+.gradle/
 build/
 app/build/
-.gradle/
-.idea/
-*.iml
 local.properties
-.DS_Store
-
-# Signing keys
+keystore.properties
 *.jks
 *.keystore
-keystore.properties
-release.jks
-

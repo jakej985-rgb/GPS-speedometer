@@ -1,6 +1,7 @@
 package com.example.gpsspeedometer.logic
 
 import android.location.Location
+import android.os.SystemClock
 import android.util.Log
 import com.example.gpsspeedometer.data.AppSettings
 import com.example.gpsspeedometer.data.SettingsRepository
@@ -18,13 +19,17 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.max
 
 class TripManager(
     private val settingsRepository: SettingsRepository,
     private val tripDao: TripDao,
     private val scope: CoroutineScope,
-    private val speedLimitRepository: SpeedLimitRepository? = null
+    private val speedLimitRepository: SpeedLimitRepository? = null,
+    private val clock: () -> Long = { SystemClock.elapsedRealtime() }
 ) {
 
     private val _tripState = MutableStateFlow(TripStats())
@@ -41,10 +46,13 @@ class TripManager(
     private var currentTripId: Long? = null
     private var lastValidLocation: LocationSample? = null
     private var lastSmoothedSpeedMph: Float = 0f
+    private var pendingNoSpeedMotion: Boolean = false
+    // Timestamp of the most recent accepted fix; separate from the distance anchor so the
+    // gap rule applies to consecutive fixes even while the anchor is held
+    private var lastFixTimestamp: Long = 0L
 
     // Wall-clock & location time tracking for accurate elapsed time accounting (including pauses)
     private var tripStartTime: Long = 0L
-    private var firstLocationTimestamp: Long = 0L
     private var totalPausedDurationMs: Long = 0L
     private var lastPauseTimestamp: Long = 0L
 
@@ -74,22 +82,29 @@ class TripManager(
     fun startTrip() {
         if (_tripState.value.isRecording) return
 
+        // Wall clock for the calendar start; monotonic clock for elapsed-time math
         val now = System.currentTimeMillis()
-        tripStartTime = now
-        firstLocationTimestamp = 0L
+        tripStartTime = clock()
         totalPausedDurationMs = 0L
         lastPauseTimestamp = 0L
         lastValidLocation = null
+        pendingNoSpeedMotion = false
+        lastFixTimestamp = 0L
         lastSmoothedSpeedMph = 0f
         synchronized(historyLock) {
             speedHistoryDeque.clear()
             _speedHistory.value = emptyList()
         }
 
+        // Comma-free, second-precision, and timezone-explicit so the label stays unambiguous
+        // even if the device timezone later changes
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss z", Locale.getDefault())
+        val tripName = "Trip - ${dateFormat.format(Date(now))}"
+
         scope.launch {
             try {
                 val trip = TripEntity(
-                    name = "Trip $now",
+                    name = tripName,
                     startTime = now,
                     endTime = 0,
                     elapsedMs = 0,
@@ -118,18 +133,20 @@ class TripManager(
 
     fun pauseTrip() {
         if (!_tripState.value.isRecording || _tripState.value.isPaused) return
-        lastPauseTimestamp = System.currentTimeMillis()
+        lastPauseTimestamp = clock()
         _tripState.update { it.copy(isPaused = true) }
     }
 
     fun resumeTrip() {
         if (!_tripState.value.isRecording || !_tripState.value.isPaused) return
         if (lastPauseTimestamp > 0L) {
-            totalPausedDurationMs += (System.currentTimeMillis() - lastPauseTimestamp)
+            totalPausedDurationMs += (clock() - lastPauseTimestamp)
             lastPauseTimestamp = 0L
         }
         _tripState.update { it.copy(isPaused = false) }
         lastValidLocation = null // Reset last location to avoid huge jumps/segments after pause
+        pendingNoSpeedMotion = false
+        lastFixTimestamp = 0L
     }
 
     fun updateCurrentTripName(name: String) {
@@ -150,12 +167,13 @@ class TripManager(
         if (!_tripState.value.isRecording) return
 
         val now = System.currentTimeMillis()
+        val nowMono = clock()
         if (_tripState.value.isPaused && lastPauseTimestamp > 0L) {
-            totalPausedDurationMs += (now - lastPauseTimestamp)
+            totalPausedDurationMs += (nowMono - lastPauseTimestamp)
             lastPauseTimestamp = 0L
         }
         val finalElapsedMs = if (tripStartTime > 0L) {
-            max(0L, now - tripStartTime - totalPausedDurationMs)
+            max(0L, nowMono - tripStartTime - totalPausedDurationMs)
         } else {
             _tripState.value.elapsedMs
         }
@@ -179,7 +197,6 @@ class TripManager(
         }
         currentTripId = null
         tripStartTime = 0L
-        firstLocationTimestamp = 0L
         totalPausedDurationMs = 0L
 
         scope.launch {
@@ -250,41 +267,38 @@ class TripManager(
             return
         }
 
-        // Always track max speed on accurate GPS samples
         val isAccurate = location.accuracyMeters <= settings.accuracyThresholdMeters
-        val newMaxSpeed = if (isAccurate) max(_tripState.value.maxSpeedMph, smoothedMph) else _tripState.value.maxSpeedMph
 
-        // Calculate elapsed time (supporting wall-clock and location timestamps)
-        if (firstLocationTimestamp == 0L && location.timestamp > 0L) {
-            firstLocationTimestamp = location.timestamp
-        }
-        val wallClockElapsed = if (tripStartTime > 0L) {
-            max(0L, System.currentTimeMillis() - tripStartTime - totalPausedDurationMs)
+        // Elapsed time uses a monotonic clock (immune to device clock changes) with pauses excluded
+        val currentElapsed = if (tripStartTime > 0L) {
+            max(0L, clock() - tripStartTime - totalPausedDurationMs)
         } else {
             _tripState.value.elapsedMs
         }
-        val locationElapsed = if (firstLocationTimestamp > 0L && location.timestamp >= firstLocationTimestamp) {
-            max(0L, location.timestamp - firstLocationTimestamp)
-        } else {
-            0L
-        }
-        val currentElapsed = max(wallClockElapsed, locationElapsed)
 
         var newDistance = _tripState.value.distanceMeters
         var shouldPersistPoint = false
+        var isSpike = false
 
         if (isAccurate) {
             if (lastValidLocation == null) {
                 lastValidLocation = location
+                lastFixTimestamp = location.timestamp
+                pendingNoSpeedMotion = false
                 shouldPersistPoint = true
             } else {
+                // Gap rule uses the interval between consecutive fixes; implied speed uses the
+                // anchor interval because distance is measured from the anchor
+                val gapSec = (location.timestamp - lastFixTimestamp) / 1000f
                 val deltaSec = (location.timestamp - lastValidLocation!!.timestamp) / 1000f
 
-                if (deltaSec >= settings.minDeltaSec) {
-                    if (deltaSec > settings.maxDeltaSec) {
+                if (gapSec >= settings.minDeltaSec) {
+                    if (gapSec > settings.maxDeltaSec) {
                         // Large time gap (e.g. stopped for a while, GPS temporarily lost, or service restart):
                         // Advance lastValidLocation to resume tracking without adding an artificial leap distance
+                        lastFixTimestamp = location.timestamp
                         lastValidLocation = location
+                        pendingNoSpeedMotion = false
                         shouldPersistPoint = true
                     } else {
                         // Normal sequential update
@@ -299,17 +313,45 @@ class TripManager(
                         // Spike plausibility check
                         val impliedMph = if (deltaSec > 0) (dist / deltaSec) * 2.23694f else 0f
                         if (impliedMph <= settings.maxPlausibleMph) {
-                            if (dist >= settings.minSegmentMeters) {
+                            // Only plausible fixes advance the gap clock; rejected spikes must not
+                            // hide a real tracking gap from the maxDeltaSec reset
+                            lastFixTimestamp = location.timestamp
+                            // Motion evidence: either the GPS reports speed, or the displacement exceeds
+                            // the combined positional uncertainty of both fixes (covers providers that
+                            // report no speed, where speedMps is 0). Drift stays within uncertainty, so
+                            // a stationary device keeps refreshing the anchor and never accumulates.
+                            val uncertainty = max(
+                                settings.minSegmentMeters,
+                                location.accuracyMeters + lastValidLocation!!.accuracyMeters
+                            )
+                            // Without GPS speed, a single jump beyond uncertainty may be noise; require
+                            // two consecutive such fixes before treating displacement as motion.
+                            val hasSpeedEvidence = location.speedMps >= STATIONARY_SPEED_MPS
+                            val beyondUncertainty = dist > uncertainty
+                            val isMoving = hasSpeedEvidence || (beyondUncertainty && pendingNoSpeedMotion)
+                            pendingNoSpeedMotion = !hasSpeedEvidence && beyondUncertainty
+                            if (!isMoving) {
+                                // Stationary: refresh anchor. Pending no-speed jump: hold anchor so the
+                                // next fix is measured from the same point.
+                                if (!pendingNoSpeedMotion) lastValidLocation = location
+                            } else if (dist >= settings.minSegmentMeters) {
                                 newDistance += dist
                                 shouldPersistPoint = true
+                                lastValidLocation = location
                             }
-                            // Keep lastValidLocation fresh (even if stationary < minSegmentMeters)
-                            // to prevent deltaSec from building up beyond maxDeltaSec and deadlocking
-                            lastValidLocation = location
+                        } else {
+                            isSpike = true
                         }
                     }
                 }
             }
+        }
+
+        // Only count max speed on accurate, non-spike samples
+        val newMaxSpeed = if (isAccurate && !isSpike) {
+            max(_tripState.value.maxSpeedMph, smoothedMph)
+        } else {
+            _tripState.value.maxSpeedMph
         }
 
         val elapsedHours = currentElapsed / 3600000f
@@ -339,6 +381,11 @@ class TripManager(
         if (shouldPersistPoint) {
             persistPoint(location, rawMph, smoothedMph, currentSpeedLimit?.speedLimitMph)
         }
+    }
+
+    private companion object {
+        // Below ~1.1 mph the device is treated as stationary for distance accumulation
+        const val STATIONARY_SPEED_MPS = 0.5f
     }
 
     private fun calculateSmoothedSpeed(rawMph: Float): Float {
