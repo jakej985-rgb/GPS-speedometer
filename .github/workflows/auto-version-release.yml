@@ -50,7 +50,8 @@ jobs:
       !contains(github.event.head_commit.message, '[skip ci]') &&
       !contains(github.event.head_commit.message, 'chore(release):') &&
       !startsWith(github.event.head_commit.message, 'chore(deps)') &&
-      !startsWith(github.event.head_commit.message, 'chore(ci)')
+      !startsWith(github.event.head_commit.message, 'chore(ci)') &&
+      !contains(github.event.head_commit.message, '/dependabot/')
     uses: ./.github/workflows/ci.yml
 
   bump-and-release:
