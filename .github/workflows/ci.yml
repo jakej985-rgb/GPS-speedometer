@@ -37,3 +37,72 @@ jobs:
 
       - name: Run Lint
         run: ./gradlew lintDebug
+
+  # Unit tests and lint never exercise the release build path: signing config and
+  # the release variant's manifest/resource merge only fail during a real release.
+  # This assembles both variants on every PR with a throwaway key, so that
+  # breakage shows up before merge instead of mid-release.
+  build:
+    name: Build Debug & Release APKs
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      # Ephemeral key generated per run in the runner's temp dir. It is never
+      # reused for a published build and holds no secret material.
+      - name: Generate throwaway signing keystore
+        env:
+          CI_KEYSTORE_PASSWORD: ci-throwaway-password
+        run: |
+          keytool -genkeypair \
+            -keystore "$RUNNER_TEMP/ci-throwaway.jks" \
+            -storetype JKS \
+            -keyalg RSA -keysize 2048 -validity 1 \
+            -alias ci-throwaway \
+            -storepass "$CI_KEYSTORE_PASSWORD" \
+            -keypass "$CI_KEYSTORE_PASSWORD" \
+            -dname "CN=CI, OU=CI, O=CI, L=CI, ST=CI, C=US"
+
+      - name: Assemble debug and release
+        run: ./gradlew assembleDebug assembleRelease
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/ci-throwaway.jks
+          KEYSTORE_PASSWORD: ci-throwaway-password
+          KEY_ALIAS: ci-throwaway
+          KEY_PASSWORD: ci-throwaway-password
+
+      # A missing keystore would silently produce an unsigned release APK and
+      # still succeed, so assert the artifacts exist and are actually signed.
+      - name: Verify APKs and release signature
+        run: |
+          shopt -s nullglob
+          debug_apks=(app/build/outputs/apk/debug/*.apk)
+          release_apks=(app/build/outputs/apk/release/*.apk)
+          if [ ${#debug_apks[@]} -eq 0 ] || [ ${#release_apks[@]} -eq 0 ]; then
+            echo "::error::Expected debug and release APKs were not produced"
+            ls -R app/build/outputs || true
+            exit 1
+          fi
+          ls -lh "${debug_apks[@]}" "${release_apks[@]}"
+
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          APKSIGNER=$(ls -1 "$SDK"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found under $SDK/build-tools"
+            exit 1
+          fi
+          "$APKSIGNER" verify --print-certs "${release_apks[@]}"
