@@ -79,6 +79,9 @@ jobs:
           echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
           echo "Selected bump level: $BUMP"
 
+      # Only the working tree changes here; nothing is committed or pushed until
+      # the APKs have been built, so a failure anywhere below leaves main intact
+      # and consumes no version number.
       - name: Execute version bump
         run: |
           BUMP="${{ steps.bump_level.outputs.bump }}"
@@ -107,9 +110,57 @@ jobs:
 
           echo "New Version: $TAG (versionCode: $CODE)"
 
+      - name: Decode signing keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.jks
+
+      - name: Build Release and Debug APKs
+        run: ./gradlew assembleRelease assembleDebug
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Verify APK artifacts
+        run: |
+          shopt -s nullglob
+          release_apks=(app/build/outputs/apk/release/*.apk)
+          debug_apks=(app/build/outputs/apk/debug/*.apk)
+          if [ ${#release_apks[@]} -eq 0 ] || [ ${#debug_apks[@]} -eq 0 ]; then
+            echo "Expected APKs are missing; refusing to publish a release."
+            ls -R app/build/outputs || true
+            exit 1
+          fi
+          ls -lh "${release_apks[@]}" "${debug_apks[@]}"
+
+      # A draft release alongside a tag that does not exist yet: GitHub creates
+      # the tag only when the draft is published, so the release (and all of its
+      # assets) is assembled before anything reaches main.
+      - name: Create draft release with APKs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          CODE: ${{ steps.version.outputs.code }}
+        run: |
+          cat > release-notes.md <<EOF
+          ## GPS Speedometer ${TAG}
+          - Version Code: \`${CODE}\`
+          - Automated release build generated from commit \`${GITHUB_SHA}\`.
+          - Passed Quality & Test Push Gatekeeper.
+          EOF
+          gh release create "$TAG" \
+            --draft \
+            --title "Release $TAG" \
+            --notes-file release-notes.md \
+            app/build/outputs/apk/release/*.apk \
+            app/build/outputs/apk/debug/*.apk
+
       - name: Commit, tag, and push version bump
+        id: push_bump
         env:
           RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -126,37 +177,24 @@ jobs:
           git remote set-url origin "git@github.com:${GITHUB_REPOSITORY}.git"
 
           git add version.properties
-          git commit -m "chore(release): bump version to ${{ steps.version.outputs.tag }} [skip ci]"
-          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git commit -m "chore(release): bump version to ${TAG} [skip ci]"
+          git tag -a "$TAG" -m "Release $TAG"
 
           git push origin main
-          git push origin "${{ steps.version.outputs.tag }}"
+          git push origin "$TAG"
 
           rm -f "$HOME/.ssh/release_key"
 
-      - name: Decode Signing Keystore
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.jks
-
-      - name: Build Release and Debug APKs
-        run: ./gradlew assembleRelease assembleDebug
+      - name: Publish release
         env:
-          KEYSTORE_PATH: ${{ github.workspace }}/release.jks
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Release ${{ steps.version.outputs.tag }}
-          body: |
-            ## GPS Speedometer ${{ steps.version.outputs.tag }}
-            - Version Code: `${{ steps.version.outputs.code }}`
-            - Automated release build generated from commit `${{ github.sha }}`.
-            - Passed Quality & Test Push Gatekeeper.
-          files: |
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/apk/debug/*.apk
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # If the push never succeeded, drop the draft so a retry starts clean.
+      - name: Discard draft release on failure
+        if: failure() && steps.push_bump.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release delete "$TAG" --yes --cleanup-tag || true
