@@ -77,20 +77,25 @@ jobs:
 
       - name: Determine bump level
         id: bump_level
+        # Commit messages and user input are passed through env, never spliced into the
+        # script body: a merge commit's multi-line message would otherwise be executed
+        # as shell commands and fail the step.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BUMP_INPUT: ${{ github.event.inputs.bump_type }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            BUMP="${{ github.event.inputs.bump_type }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            BUMP="$BUMP_INPUT"
+          elif printf '%s' "$COMMIT_MSG" | grep -qiE "breaking change|BREAKING:"; then
+            BUMP="major"
+          elif printf '%s' "$COMMIT_MSG" | grep -qiE "^feat(\(.*\))?:"; then
+            BUMP="minor"
           else
-            COMMIT_MSG="${{ github.event.head_commit.message }}"
-            if echo "$COMMIT_MSG" | grep -qiE "breaking change|BREAKING:"; then
-              BUMP="major"
-            elif echo "$COMMIT_MSG" | grep -qiE "^feat(\(.*\))?:"; then
-              BUMP="minor"
-            else
-              BUMP="patch"
-            fi
+            BUMP="patch"
           fi
-          echo "bump=$BUMP" >> $GITHUB_OUTPUT
+          : "${BUMP:=patch}"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
           echo "Selected bump level: $BUMP"
 
       - name: Execute version bump
