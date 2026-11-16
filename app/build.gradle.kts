@@ -144,7 +144,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     // Extended Icons
     implementation("androidx.compose.material:material-icons-extended")
