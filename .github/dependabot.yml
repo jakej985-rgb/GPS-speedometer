@@ -1,0 +1,70 @@
+version: 2
+
+updates:
+  # Gradle: declared dependencies in build.gradle.kts, plugin versions in the
+  # root/subproject plugins blocks, and the Gradle wrapper itself (Dependabot
+  # runs the wrapper task and updates gradle-wrapper.properties, gradlew,
+  # gradlew.bat and the jar).
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+    groups:
+      # Kotlin, KSP and the Compose compiler are version-locked: KSP stamps the
+      # Kotlin version into its own version string (1.9.22-1.0.16) and
+      # kotlinCompilerExtensionVersion must match the compiler, so these move in
+      # one PR or the build breaks.
+      kotlin-compiler-stack:
+        patterns:
+          # The Kotlin Gradle plugin only — kotlinx-* libraries version
+          # independently and should not wait behind the compiler.
+          - "org.jetbrains.kotlin.android"
+          - "com.google.devtools.ksp"
+      android-tooling:
+        patterns:
+          - "com.android.application"
+          - "com.android.tools.build"
+        update-types:
+          - "minor"
+          - "patch"
+      androidx:
+        patterns:
+          - "androidx.*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Kotlin majors are a manual migration: 2.x replaces
+      # kotlinCompilerExtensionVersion with the Compose Compiler Gradle plugin,
+      # so a bot PR would only ever be red.
+      - dependency-name: "org.jetbrains.kotlin.android"
+        update-types:
+          - "version-update:semver-major"
+
+  # Workflow actions and runners pinned in .github/workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - "dependencies"
+    groups:
+      # Actions are bumped by major tag (checkout@v7), so one PR keeps them
+      # in step rather than one PR per action per week.
+      github-actions:
+        patterns:
+          - "*"
