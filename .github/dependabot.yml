@@ -13,6 +13,10 @@ updates:
       time: "06:00"
       timezone: "Etc/UTC"
     open-pull-requests-limit: 5
+    # Deliberately no [skip ci] here: a skip keyword in a PR's head commit
+    # suppresses that PR's CI run, and GitHub leaves the required status check
+    # Pending, which blocks the PR from merging. The release workflow filters
+    # these prefixes instead (auto-version-release.yml, gatekeeper `if`).
     commit-message:
       prefix: "chore(deps)"
     labels:
