@@ -108,9 +108,22 @@ jobs:
           echo "New Version: $TAG (versionCode: $CODE)"
 
       - name: Commit, tag, and push version bump
+        env:
+          RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # main requires a passing status check, and this commit is deliberately
+          # excluded from CI ([skip ci] + the gatekeeper's own filter), so the push
+          # is authenticated with the repo's deploy key, the ruleset's only bypass
+          # actor. GITHUB_TOKEN cannot bypass a ruleset on a user-owned repo.
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$RELEASE_DEPLOY_KEY" > "$HOME/.ssh/release_key"
+          chmod 600 "$HOME/.ssh/release_key"
+          ssh-keyscan -H github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git remote set-url origin "git@github.com:${GITHUB_REPOSITORY}.git"
 
           git add version.properties
           git commit -m "chore(release): bump version to ${{ steps.version.outputs.tag }} [skip ci]"
@@ -118,6 +131,8 @@ jobs:
 
           git push origin main
           git push origin "${{ steps.version.outputs.tag }}"
+
+          rm -f "$HOME/.ssh/release_key"
 
       - name: Decode Signing Keystore
         run: |
