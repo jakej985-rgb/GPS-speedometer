@@ -40,7 +40,17 @@ jobs:
   # on a green run.
   gatekeeper:
     name: Push Gatekeeper (Quality & Tests)
-    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, 'chore(release):')"
+    # Automation commits do not cut releases: without this, every merged
+    # Dependabot PR would publish a patch release. The dependency and CI prefixes
+    # are filtered here rather than adding [skip ci] to the Dependabot commit
+    # message, because a skip keyword in a PR's head commit also skips that PR's
+    # CI run, which leaves the required status check Pending and makes the PR
+    # permanently unmergeable under the main ruleset.
+    if: >-
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, 'chore(release):') &&
+      !startsWith(github.event.head_commit.message, 'chore(deps)') &&
+      !startsWith(github.event.head_commit.message, 'chore(ci)')
     uses: ./.github/workflows/ci.yml
 
   bump-and-release:
