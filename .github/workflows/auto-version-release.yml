@@ -23,6 +23,17 @@ on:
 permissions:
   contents: write
 
+# Serialise release runs: a second push to main waits for the first to finish
+# instead of both reading the same version.properties and double-bumping, or
+# racing each other's push. Never cancelled — cancelling mid-release could leave
+# a pushed bump with no published release. The group is a literal so it cannot
+# collide with the CI group this workflow calls: inside a called workflow
+# github.workflow resolves to the *caller's* name, so a shared expression would
+# make the gatekeeper wait on a group this run already holds.
+concurrency:
+  group: release-bump
+  cancel-in-progress: false
+
 jobs:
   # Reuses the CI workflow's test + lint job instead of duplicating it, so a
   # push to main runs the gate exactly once while still blocking the release
