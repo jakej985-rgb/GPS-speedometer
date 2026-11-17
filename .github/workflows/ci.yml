@@ -108,6 +108,17 @@ jobs:
           fi
           ls -lh "${debug_apks[@]}" "${release_apks[@]}"
 
+          # The APK rename moved from the removed applicationVariants API to
+          # androidComponents. A silent regression would still publish, under a
+          # different asset name, so the expected pattern is asserted here.
+          shopt -s nullglob
+          named=(app/build/outputs/apk/release/GPS-Speedometer-*.apk)
+          if [ ${#named[@]} -eq 0 ]; then
+            echo "::error::Release APK is not named GPS-Speedometer-*.apk: $(basename "${release_apks[0]}")"
+            exit 1
+          fi
+          echo "APK naming OK: $(basename "${named[0]}")"
+
           SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           APKSIGNER=$(ls -1 "$SDK"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
           if [ -z "$APKSIGNER" ]; then
