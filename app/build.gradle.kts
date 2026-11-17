@@ -1,10 +1,13 @@
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // AGP 9 compiles Kotlin itself, so org.jetbrains.kotlin.android is gone. The
+    // Compose compiler still needs declaring, at exactly the Kotlin version.
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
 
@@ -87,15 +90,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
     }
     packaging {
         resources {
@@ -106,11 +103,17 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 
-    applicationVariants.all {
-        val variant = this
-        outputs.all {
-            (this as? com.android.build.gradle.api.ApkVariantOutput)?.outputFileName =
-                "GPS-Speedometer-v${variant.versionName}-${variant.name}.apk"
+}
+
+// The old applicationVariants API no longer exists in AGP 9. APKs are renamed
+// through the artifact-centric API instead; CI asserts the release APK keeps the
+// GPS-Speedometer-* name that the release workflow publishes under.
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set(
+                "GPS-Speedometer-v${output.versionName.get()}-${variant.name}.apk"
+            )
         }
     }
 }
@@ -131,7 +134,7 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.1.0")
 
     // Room
-    val roomVersion = "2.6.1"
+    val roomVersion = "2.7.0"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
@@ -233,5 +236,7 @@ tasks.register("bumpMajor") {
 }
 
 kotlin {
-    jvmToolchain(17)
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+    }
 }
