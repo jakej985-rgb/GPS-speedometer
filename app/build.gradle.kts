@@ -131,7 +131,7 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.10.2")
 
     // Location
-    implementation("com.google.android.gms:play-services-location:21.1.0")
+    implementation("com.google.android.gms:play-services-location:21.4.0")
 
     // Room
     val roomVersion = "2.8.5"
