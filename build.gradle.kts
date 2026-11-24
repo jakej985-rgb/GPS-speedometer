@@ -16,7 +16,7 @@ buildscript {
 }
 
 plugins {
-    id("com.android.application") version "9.4.0" apply false
+    id("com.android.application") version "9.5.2" apply false
     // Compose compiler ships with Kotlin from 2.0, so its version must match.
     id("org.jetbrains.kotlin.plugin.compose") version "2.3.21" apply false
 }
