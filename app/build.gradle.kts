@@ -156,7 +156,7 @@ dependencies {
     implementation("org.osmdroid:osmdroid-android:6.1.18")
 
     // Networking for Overpass API
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp:5.5.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260814")
