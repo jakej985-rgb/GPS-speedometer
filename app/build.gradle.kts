@@ -25,7 +25,12 @@ val vCode = versionProps.getProperty("VERSION_CODE", "1").toInt()
 
 android {
     namespace = "com.example.gpsspeedometer"
-    compileSdk = 37
+    // Compose 1.13 (compose-bom 2026.11.01) requires compiling against API 37.1+
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig {
         applicationId = "com.example.gpsspeedometer"
