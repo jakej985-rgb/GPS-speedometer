@@ -87,13 +87,17 @@ class SpeedLimitRepository(
         get() = synchronized(_diagnosticEvents) { _diagnosticEvents.toList() }
 
     internal fun recordDiagnostic(event: SpeedLimitLookupEvent) {
-        synchronized(_diagnosticEvents) {
+        // The epoch is read and the buffer updated while holding the same lock the clear takes,
+        // so a lookup recorded just before a clear cannot pick up the post-clear epoch after
+        // the buffer was emptied and write the deleted row back.
+        val epoch = synchronized(_diagnosticEvents) {
             if (_diagnosticEvents.size >= MAX_SESSION_EVENTS) {
                 _diagnosticEvents.removeAt(0)
             }
             _diagnosticEvents.add(event)
+            diagnosticEpoch.get()
         }
-        persistDiagnostic(event, diagnosticEpoch.get())
+        persistDiagnostic(event, epoch)
     }
 
     /**
@@ -511,17 +515,16 @@ class SpeedLimitRepository(
      * the log is gone.
      */
     suspend fun clearDiagnosticLog() {
-        // Retire writes recorded before this point before touching the table
-        diagnosticEpoch.incrementAndGet()
-        try {
-            val dao = diagnosticDao
-            if (dao != null) {
-                // Waits out a write that is already running, so the wipe happens after it
-                diagnosticMutex.withLock { dao.clearAll() }
-            }
-        } finally {
-            synchronized(_diagnosticEvents) { _diagnosticEvents.clear() }
+        // Retires writes recorded before this point and empties the session buffer together,
+        // under the lock recordDiagnostic takes, so one clear covers both the queued inserts
+        // and an export that would merge the buffer back in.
+        synchronized(_diagnosticEvents) {
+            diagnosticEpoch.incrementAndGet()
+            _diagnosticEvents.clear()
         }
+        val dao = diagnosticDao ?: return
+        // Waits out a write that is already running, so the wipe happens after it
+        diagnosticMutex.withLock { dao.clearAll() }
     }
 
     /**

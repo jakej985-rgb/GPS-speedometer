@@ -590,6 +590,45 @@ class SpeedLimitRepositoryTest {
         assertEquals(1, output.toString("UTF-8").lines().filter { it.isNotBlank() }.size) // header only
     }
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun `test a lookup recorded after the clear is still persisted`() = kotlinx.coroutines.runBlocking {
+        val scheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
+        val fakeDao = FakeSpeedLimitDiagnosticDao()
+        val repository = SpeedLimitRepository(
+            diagnosticDao = fakeDao,
+            diagnosticScope = kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(scheduler)
+            )
+        )
+        repository.recordDiagnostic(
+            SpeedLimitLookupEvent(
+                timestamp = 3_500L,
+                lat = 47.0,
+                lng = -111.0,
+                status = "SUCCESS",
+                provider = "OsmApi",
+                details = "before-clear"
+            )
+        )
+        repository.clearDiagnosticLog()
+
+        repository.recordDiagnostic(
+            SpeedLimitLookupEvent(
+                timestamp = 3_600L,
+                lat = 47.1,
+                lng = -111.1,
+                status = "SUCCESS",
+                provider = "OsmApi",
+                details = "after-clear"
+            )
+        )
+        scheduler.advanceUntilIdle()
+
+        assertEquals(listOf("after-clear"), fakeDao.getAll().map { it.details })
+        assertTrue(repository.diagnosticEvents.any { it.details == "after-clear" })
+    }
+
     @Test
     fun `test clearDiagnosticLog waits for a slow insert instead of letting it resurrect`() =
         kotlinx.coroutines.runBlocking {
