@@ -1,5 +1,6 @@
 package com.example.gpsspeedometer.speedlimit
 
+import kotlinx.coroutines.async
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -556,11 +557,85 @@ class SpeedLimitRepositoryTest {
         assertTrue(!rows[0].contains("before-clear"))
     }
 
-    private class FakeSpeedLimitDiagnosticDao : com.example.gpsspeedometer.data.SpeedLimitDiagnosticDao {
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun `test clearDiagnosticLog drops inserts that were still queued`() = kotlinx.coroutines.runBlocking {
+        val scheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
+        val fakeDao = FakeSpeedLimitDiagnosticDao()
+        // A standard test dispatcher keeps launched writes queued until it is advanced, which
+        // reproduces a lookup recorded just before the user confirms the clear.
+        val repository = SpeedLimitRepository(
+            diagnosticDao = fakeDao,
+            diagnosticScope = kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(scheduler)
+            )
+        )
+        repository.recordDiagnostic(
+            SpeedLimitLookupEvent(
+                timestamp = 3_000L,
+                lat = 47.0,
+                lng = -111.0,
+                status = "SUCCESS",
+                provider = "OsmApi",
+                details = "queued-before-clear"
+            )
+        )
+
+        repository.clearDiagnosticLog()
+        scheduler.advanceUntilIdle()
+
+        assertEquals(0, fakeDao.getEventCount())
+        val output = java.io.ByteArrayOutputStream()
+        repository.exportDiagnosticCsv(output)
+        assertEquals(1, output.toString("UTF-8").lines().filter { it.isNotBlank() }.size) // header only
+    }
+
+    @Test
+    fun `test clearDiagnosticLog waits for a slow insert instead of letting it resurrect`() =
+        kotlinx.coroutines.runBlocking {
+            val insertStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val releaseInsert = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val fakeDao = FakeSpeedLimitDiagnosticDao(
+                insertStarted = insertStarted,
+                insertGate = releaseInsert
+            )
+            val repository = SpeedLimitRepository(
+                diagnosticDao = fakeDao,
+                diagnosticScope = kotlinx.coroutines.CoroutineScope(
+                    kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default
+                )
+            )
+            repository.recordDiagnostic(
+                SpeedLimitLookupEvent(
+                    timestamp = 4_000L,
+                    lat = 47.0,
+                    lng = -111.0,
+                    status = "SUCCESS",
+                    provider = "OsmApi",
+                    details = "in-flight-at-clear"
+                )
+            )
+            insertStarted.await()
+
+            val clearJob = async {
+                repository.clearDiagnosticLog()
+            }
+            releaseInsert.complete(Unit)
+            clearJob.await()
+
+            assertEquals(0, fakeDao.getEventCount())
+        }
+
+    private class FakeSpeedLimitDiagnosticDao(
+        private val insertStarted: kotlinx.coroutines.CompletableDeferred<Unit>? = null,
+        private val insertGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    ) : com.example.gpsspeedometer.data.SpeedLimitDiagnosticDao {
         val storage = mutableListOf<com.example.gpsspeedometer.data.SpeedLimitDiagnosticEntity>()
         private var nextId = 1L
 
         override suspend fun insert(event: com.example.gpsspeedometer.data.SpeedLimitDiagnosticEntity): Long {
+            insertStarted?.complete(Unit)
+            insertGate?.await()
             val stored = event.copy(id = nextId++)
             storage.add(stored)
             return stored.id
