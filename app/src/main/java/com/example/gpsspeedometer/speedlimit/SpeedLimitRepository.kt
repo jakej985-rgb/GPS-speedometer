@@ -79,6 +79,11 @@ class SpeedLimitRepository(
     // complete across long drives; the buffer only keeps the latest rows in memory.
     private val _diagnosticEvents = mutableListOf<SpeedLimitLookupEvent>()
     private val diagnosticWriteCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    // Inserts and the clear action share this lock so a write can never land after a wipe,
+    // and diagnosticEpoch retires writes that were queued before the clear took place.
+    private val diagnosticMutex = Mutex()
+    private val diagnosticEpoch = java.util.concurrent.atomic.AtomicLong(0)
     val diagnosticEvents: List<SpeedLimitLookupEvent>
         get() = synchronized(_diagnosticEvents) { _diagnosticEvents.toList() }
 
@@ -89,16 +94,24 @@ class SpeedLimitRepository(
             }
             _diagnosticEvents.add(event)
         }
-        persistDiagnostic(event)
+        persistDiagnostic(event, diagnosticEpoch.get())
     }
 
-    private fun persistDiagnostic(event: SpeedLimitLookupEvent) {
+    /**
+     * Writes one event through [diagnosticMutex], and skips it when [epoch] is stale, i.e. a
+     * clear happened after the event was recorded. Holding the same lock as
+     * [clearDiagnosticLog] is what keeps a queued insert from re-adding cleared rows.
+     */
+    private fun persistDiagnostic(event: SpeedLimitLookupEvent, epoch: Long) {
         val dao = diagnosticDao ?: return
         diagnosticScope.launch {
             try {
-                dao.insert(event.toDiagnosticEntity())
-                if (diagnosticWriteCount.incrementAndGet() % PRUNE_INTERVAL == 0) {
-                    dao.pruneToLatest(MAX_PERSISTED_EVENTS)
+                diagnosticMutex.withLock {
+                    if (diagnosticEpoch.get() != epoch) return@withLock
+                    dao.insert(event.toDiagnosticEntity())
+                    if (diagnosticWriteCount.incrementAndGet() % PRUNE_INTERVAL == 0) {
+                        dao.pruneToLatest(MAX_PERSISTED_EVENTS)
+                    }
                 }
             } catch (e: Exception) {
                 // Diagnostics are best-effort and must never break speed limit lookups
@@ -489,14 +502,22 @@ class SpeedLimitRepository(
     /**
      * Discards the whole diagnostic log, in memory and on disk, so the next drive starts
      * from a clean slate.
+     *
+     * Throws when the database wipe fails so the caller can report it instead of claiming
+     * the log is gone.
      */
     suspend fun clearDiagnosticLog() {
-        synchronized(_diagnosticEvents) { _diagnosticEvents.clear() }
-        diagnosticWriteCount.set(0)
+        // Retire writes recorded before this point before touching the table
+        diagnosticEpoch.incrementAndGet()
         try {
-            diagnosticDao?.clearAll()
-        } catch (e: Exception) {
-            // Diagnostics are best-effort; a failed wipe must not surface as a crash
+            val dao = diagnosticDao
+            if (dao != null) {
+                // Waits out a write that is already running, so the wipe happens after it
+                diagnosticMutex.withLock { dao.clearAll() }
+            }
+        } finally {
+            synchronized(_diagnosticEvents) { _diagnosticEvents.clear() }
+            diagnosticWriteCount.set(0)
         }
     }
 
