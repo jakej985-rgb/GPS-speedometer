@@ -626,6 +626,50 @@ class SpeedLimitRepositoryTest {
             assertEquals(0, fakeDao.getEventCount())
         }
 
+    @Test
+    fun `test a short session still trims a full diagnostic log`() = kotlinx.coroutines.runBlocking {
+        val fakeDao = FakeSpeedLimitDiagnosticDao()
+        repeat(SpeedLimitRepository.MAX_PERSISTED_EVENTS) { index ->
+            fakeDao.insert(
+                com.example.gpsspeedometer.data.SpeedLimitDiagnosticEntity(
+                    timestamp = 10_000L + index,
+                    lat = 47.0,
+                    lng = -111.0,
+                    currentSpeedMph = 0f,
+                    speedLimitMph = 45,
+                    speedLimitKmh = 72,
+                    roadName = "10th Avenue South",
+                    status = "SUCCESS",
+                    provider = "OsmApi",
+                    details = "old-$index"
+                )
+            )
+        }
+
+        // A fresh repository is a new session; the old insert counter restarted at zero here and
+        // this single event would never have tripped the 100-insert retention pass.
+        val repository = SpeedLimitRepository(
+            diagnosticDao = fakeDao,
+            diagnosticScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
+        )
+        repository.recordDiagnostic(
+            SpeedLimitLookupEvent(
+                timestamp = 99_000L,
+                lat = 47.0,
+                lng = -111.0,
+                status = "SUCCESS",
+                provider = "OsmApi",
+                details = "only-event-this-session"
+            )
+        )
+
+        assertEquals(SpeedLimitRepository.MAX_PERSISTED_EVENTS, fakeDao.getEventCount())
+        val details = fakeDao.getAll().map { it.details }
+        assertTrue(details.contains("only-event-this-session"))
+        assertTrue(!details.contains("old-0"))
+        assertTrue(details.contains("old-${SpeedLimitRepository.MAX_PERSISTED_EVENTS - 1}"))
+    }
+
     private class FakeSpeedLimitDiagnosticDao(
         private val insertStarted: kotlinx.coroutines.CompletableDeferred<Unit>? = null,
         private val insertGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null

@@ -78,7 +78,6 @@ class SpeedLimitRepository(
     // speed_limit_diagnostics Room table, so the log survives app restarts and stays
     // complete across long drives; the buffer only keeps the latest rows in memory.
     private val _diagnosticEvents = mutableListOf<SpeedLimitLookupEvent>()
-    private val diagnosticWriteCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     // Inserts and the clear action share this lock so a write can never land after a wipe,
     // and diagnosticEpoch retires writes that were queued before the clear took place.
@@ -109,7 +108,12 @@ class SpeedLimitRepository(
                 diagnosticMutex.withLock {
                     if (diagnosticEpoch.get() != epoch) return@withLock
                     dao.insert(event.toDiagnosticEntity())
-                    if (diagnosticWriteCount.incrementAndGet() % PRUNE_INTERVAL == 0) {
+                    // Retention is measured against the table, not against a per-process insert
+                    // counter: a counter that restarts with the app let a run of short sessions
+                    // (never reaching the interval) grow the log past MAX_PERSISTED_EVENTS
+                    // indefinitely. The COUNT is cheap next to the insert, and the delete only
+                    // runs once the table is actually over the cap.
+                    if (dao.getEventCount() > MAX_PERSISTED_EVENTS) {
                         dao.pruneToLatest(MAX_PERSISTED_EVENTS)
                     }
                 }
@@ -517,7 +521,6 @@ class SpeedLimitRepository(
             }
         } finally {
             synchronized(_diagnosticEvents) { _diagnosticEvents.clear() }
-            diagnosticWriteCount.set(0)
         }
     }
 
@@ -585,9 +588,6 @@ class SpeedLimitRepository(
 
         // Durable retention: 20,000 events is roughly 55h of 10s-throttled lookups
         internal const val MAX_PERSISTED_EVENTS = 20_000
-
-        // Only pay for a retention query every so often
-        private const val PRUNE_INTERVAL = 100
 
         fun getCacheKey(lat: Double, lng: Double): String {
             // Quantize to ~110m grid (3 decimal places)
