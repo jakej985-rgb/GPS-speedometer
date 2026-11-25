@@ -65,6 +65,21 @@ class TripsViewModel(
         }
     }
 
+    fun clearDiagnosticLog() {
+        val repository = speedLimitRepository ?: run {
+            viewModelScope.launch { _exportEvent.emit("Diagnostic log unavailable") }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.clearDiagnosticLog()
+                _exportEvent.emit("Speed diagnostic log cleared")
+            } catch (e: Exception) {
+                _exportEvent.emit("Clear failed: ${e.localizedMessage ?: "Unknown error"}")
+            }
+        }
+    }
+
     fun exportTrip(context: Context, tripId: Long, uri: Uri, type: ExportType) {
         viewModelScope.launch(Dispatchers.IO) {
             if (type == ExportType.DIAGNOSTIC) {

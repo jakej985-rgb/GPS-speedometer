@@ -9,14 +9,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         TripEntity::class,
         TripPointEntity::class,
-        OfflineRoadSegmentEntity::class
+        OfflineRoadSegmentEntity::class,
+        SpeedLimitDiagnosticEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun tripDao(): TripDao
     abstract fun offlineSpeedDao(): OfflineSpeedDao
+    abstract fun speedLimitDiagnosticDao(): SpeedLimitDiagnosticDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -43,6 +45,26 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_offline_road_segments_minLat_maxLat_minLng_maxLng` ON `offline_road_segments` (`minLat`, `maxLat`, `minLng`, `maxLng`)")
+            }
+        }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `speed_limit_diagnostics` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `timestamp` INTEGER NOT NULL,
+                        `lat` REAL NOT NULL,
+                        `lng` REAL NOT NULL,
+                        `currentSpeedMph` REAL NOT NULL,
+                        `speedLimitMph` INTEGER,
+                        `speedLimitKmh` INTEGER,
+                        `roadName` TEXT,
+                        `status` TEXT NOT NULL,
+                        `provider` TEXT NOT NULL,
+                        `details` TEXT NOT NULL
+                    )
+                """.trimIndent())
             }
         }
     }

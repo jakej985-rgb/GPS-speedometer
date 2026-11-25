@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -57,7 +59,32 @@ fun TripDetailScreen(
     val settings by viewModel.settings.collectAsState()
     var trip by remember { mutableStateOf<TripEntity?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showClearLogDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    if (showClearLogDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearLogDialog = false },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Clear Diagnostic Log?") },
+            text = { Text("This deletes every saved speed-limit lookup so a fresh log can be started for the next drive. Export the log first if you still need it.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.clearDiagnosticLog()
+                        showClearLogDialog = false
+                    }
+                ) {
+                    Text("Clear", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearLogDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     if (showDeleteDialog) {
         AlertDialog(
@@ -146,6 +173,7 @@ fun TripDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
             trip?.let { t ->
@@ -221,6 +249,15 @@ fun TripDetailScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Export Speed Diagnostic Log (.csv)")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = { showClearLogDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Clear Speed Diagnostic Log")
                 }
             }
         }

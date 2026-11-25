@@ -2,10 +2,13 @@ package com.example.gpsspeedometer.speedlimit
 
 import android.location.Location
 import com.example.gpsspeedometer.domain.SpeedLimitInfo
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -15,6 +18,8 @@ import okhttp3.Request
 import org.json.JSONObject
 import com.example.gpsspeedometer.data.OfflineRoadSegmentEntity
 import com.example.gpsspeedometer.data.OfflineSpeedDao
+import com.example.gpsspeedometer.data.SpeedLimitDiagnosticDao
+import com.example.gpsspeedometer.data.SpeedLimitDiagnosticEntity
 import java.io.ByteArrayInputStream
 import java.io.BufferedWriter
 import java.io.OutputStream
@@ -48,7 +53,9 @@ class SpeedLimitRepository(
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
         .build(),
-    private val offlineSpeedDao: OfflineSpeedDao? = null
+    private val offlineSpeedDao: OfflineSpeedDao? = null,
+    private val diagnosticDao: SpeedLimitDiagnosticDao? = null,
+    private val diagnosticScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 ) {
 
     private val _speedLimitFlow = MutableStateFlow(SpeedLimitInfo())
@@ -67,17 +74,56 @@ class SpeedLimitRepository(
     private val cachedBBoxes = mutableListOf<String>()
     private var lastRoadQueryTimestamp: Long = 0L
 
-    // In-memory diagnostic log of speed limit lookups (last 200 events)
+    // Session buffer of the newest speed limit lookups. The durable copy lives in the
+    // speed_limit_diagnostics Room table, so the log survives app restarts and stays
+    // complete across long drives; the buffer only keeps the latest rows in memory.
     private val _diagnosticEvents = mutableListOf<SpeedLimitLookupEvent>()
+
+    // Inserts and the clear action share this lock so a write can never land after a wipe,
+    // and diagnosticEpoch retires writes that were queued before the clear took place.
+    private val diagnosticMutex = Mutex()
+    private val diagnosticEpoch = java.util.concurrent.atomic.AtomicLong(0)
     val diagnosticEvents: List<SpeedLimitLookupEvent>
         get() = synchronized(_diagnosticEvents) { _diagnosticEvents.toList() }
 
     internal fun recordDiagnostic(event: SpeedLimitLookupEvent) {
-        synchronized(_diagnosticEvents) {
-            if (_diagnosticEvents.size >= 200) {
+        // The epoch is read and the buffer updated while holding the same lock the clear takes,
+        // so a lookup recorded just before a clear cannot pick up the post-clear epoch after
+        // the buffer was emptied and write the deleted row back.
+        val epoch = synchronized(_diagnosticEvents) {
+            if (_diagnosticEvents.size >= MAX_SESSION_EVENTS) {
                 _diagnosticEvents.removeAt(0)
             }
             _diagnosticEvents.add(event)
+            diagnosticEpoch.get()
+        }
+        persistDiagnostic(event, epoch)
+    }
+
+    /**
+     * Writes one event through [diagnosticMutex], and skips it when [epoch] is stale, i.e. a
+     * clear happened after the event was recorded. Holding the same lock as
+     * [clearDiagnosticLog] is what keeps a queued insert from re-adding cleared rows.
+     */
+    private fun persistDiagnostic(event: SpeedLimitLookupEvent, epoch: Long) {
+        val dao = diagnosticDao ?: return
+        diagnosticScope.launch {
+            try {
+                diagnosticMutex.withLock {
+                    if (diagnosticEpoch.get() != epoch) return@withLock
+                    dao.insert(event.toDiagnosticEntity())
+                    // Retention is measured against the table, not against a per-process insert
+                    // counter: a counter that restarts with the app let a run of short sessions
+                    // (never reaching the interval) grow the log past MAX_PERSISTED_EVENTS
+                    // indefinitely. The COUNT is cheap next to the insert, and the delete only
+                    // runs once the table is actually over the cap.
+                    if (dao.getEventCount() > MAX_PERSISTED_EVENTS) {
+                        dao.pruneToLatest(MAX_PERSISTED_EVENTS)
+                    }
+                }
+            } catch (e: Exception) {
+                // Diagnostics are best-effort and must never break speed limit lookups
+            }
         }
     }
 
@@ -457,10 +503,68 @@ class SpeedLimitRepository(
         }
     }
 
-    fun exportDiagnosticCsv(outputStream: OutputStream) {
+    suspend fun exportDiagnosticCsv(outputStream: OutputStream) {
+        writeDiagnosticCsv(outputStream, collectDiagnosticEvents())
+    }
+
+    /**
+     * Discards the whole diagnostic log, in memory and on disk, so the next drive starts
+     * from a clean slate.
+     *
+     * Throws when the database wipe fails so the caller can report it instead of claiming
+     * the log is gone.
+     */
+    suspend fun clearDiagnosticLog() {
+        // Retires writes recorded before this point and empties the session buffer together,
+        // under the lock recordDiagnostic takes, so one clear covers both the queued inserts
+        // and an export that would merge the buffer back in.
+        synchronized(_diagnosticEvents) {
+            diagnosticEpoch.incrementAndGet()
+            _diagnosticEvents.clear()
+        }
+        val dao = diagnosticDao ?: return
+        // Waits out a write that is already running, so the wipe happens after it
+        diagnosticMutex.withLock { dao.clearAll() }
+    }
+
+    /**
+     * Reads the durable Room log and merges in events that are still only in the session
+     * buffer, so an export taken right after a lookup never misses the newest rows.
+     */
+    private suspend fun collectDiagnosticEvents(): List<SpeedLimitLookupEvent> {
+        val dao = diagnosticDao
+        val persisted = if (dao != null) {
+            try {
+                dao.getAll().map { it.toLookupEvent() }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+
+        if (persisted.isEmpty()) return diagnosticEvents
+
+        val known = HashSet<String>(persisted.size * 2)
+        for (event in persisted) {
+            known.add(event.diagnosticKey())
+        }
+
+        val sessionsEvents = diagnosticEvents
+        val merged = ArrayList<SpeedLimitLookupEvent>(persisted.size + sessionsEvents.size)
+        merged.addAll(persisted)
+        for (event in sessionsEvents) {
+            if (known.add(event.diagnosticKey())) {
+                merged.add(event)
+            }
+        }
+        merged.sortBy { it.timestamp }
+        return merged
+    }
+
+    private fun writeDiagnosticCsv(outputStream: OutputStream, events: List<SpeedLimitLookupEvent>) {
         val writer = BufferedWriter(OutputStreamWriter(outputStream))
         writer.write("timestamp_iso,timestamp,latitude,longitude,speed_mph,speed_limit_mph,speed_limit_kmh,road_name,status,provider,details\n")
-        val events = diagnosticEvents
         val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }
@@ -482,6 +586,12 @@ class SpeedLimitRepository(
     }
 
     companion object {
+        // Latest lookups kept in memory for the current process (~1h of 10s throttled lookups)
+        internal const val MAX_SESSION_EVENTS = 500
+
+        // Durable retention: 20,000 events is roughly 55h of 10s-throttled lookups
+        internal const val MAX_PERSISTED_EVENTS = 20_000
+
         fun getCacheKey(lat: Double, lng: Double): String {
             // Quantize to ~110m grid (3 decimal places)
             val qLat = (lat * 1000).roundToInt()
@@ -994,6 +1104,36 @@ data class RoadSpeedSegment(
     val speedLimitKmh: Int,
     val coordinates: List<Pair<Double, Double>>
 )
+
+fun SpeedLimitLookupEvent.toDiagnosticEntity(): SpeedLimitDiagnosticEntity = SpeedLimitDiagnosticEntity(
+    timestamp = timestamp,
+    lat = lat,
+    lng = lng,
+    currentSpeedMph = currentSpeedMph,
+    speedLimitMph = speedLimitMph,
+    speedLimitKmh = speedLimitKmh,
+    roadName = roadName,
+    status = status,
+    provider = provider,
+    details = details
+)
+
+fun SpeedLimitDiagnosticEntity.toLookupEvent(): SpeedLimitLookupEvent = SpeedLimitLookupEvent(
+    timestamp = timestamp,
+    lat = lat,
+    lng = lng,
+    currentSpeedMph = currentSpeedMph,
+    speedLimitMph = speedLimitMph,
+    speedLimitKmh = speedLimitKmh,
+    roadName = roadName,
+    status = status,
+    provider = provider,
+    details = details
+)
+
+/** Identity used to avoid exporting a session event twice once it has been persisted. */
+private fun SpeedLimitLookupEvent.diagnosticKey(): String =
+    "$timestamp|$lat|$lng|$status|$provider"
 
 fun RoadSpeedSegment.toEntity(): OfflineRoadSegmentEntity {
     val minLat = coordinates.minOf { it.first }
